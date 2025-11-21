@@ -311,11 +311,13 @@ class OVFExportJobSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'virtual_machine', 'vm_name', 'remote_storage', 'remote_storage_name',
             'export_location', 'export_full_path', 'export_size_mb',
+            'downloaded_bytes', 'total_bytes', 'download_speed_mbps',
             'status', 'progress_percentage', 'error_message',
             'created_by', 'created_at', 'started_at', 'completed_at', 'duration_seconds'
         ]
         read_only_fields = ['id', 'status', 'progress_percentage', 'export_full_path',
-                            'export_size_mb', 'created_at', 'started_at', 'completed_at', 'duration_seconds']
+                            'export_size_mb', 'downloaded_bytes', 'total_bytes', 'download_speed_mbps',
+                            'created_at', 'started_at', 'completed_at', 'duration_seconds']
 
 
 class OVFExportJobCreateSerializer(serializers.ModelSerializer):

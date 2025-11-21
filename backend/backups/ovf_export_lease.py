@@ -57,6 +57,9 @@ class OVFExportLeaseService:
             self.export_job.status = 'running'
             self.export_job.started_at = timezone.now()
             self.export_job.progress_percentage = 5
+            self.export_job.downloaded_bytes = 0
+            self.export_job.total_bytes = 0
+            self.export_job.download_speed_mbps = 0
             self.export_job.save()
 
             # Create export directory
@@ -91,6 +94,10 @@ class OVFExportLeaseService:
             downloaded_files = []
             total_bytes = sum(getattr(info, 'fileSize', 0) or 0 for info in device_urls)
             downloaded_bytes = 0
+
+            # Stocker la taille totale dans le modèle
+            self.export_job.total_bytes = total_bytes
+            self.export_job.save()
 
             if total_bytes > 0:
                 total_mb = total_bytes / (1024 * 1024)
@@ -264,6 +271,8 @@ class OVFExportLeaseService:
         """
         Download a file from the lease URL with progress tracking using règle de trois
         """
+        import time
+
         response = requests.get(
             url,
             auth=(self.esxi_user, self.esxi_pass),
@@ -279,6 +288,8 @@ class OVFExportLeaseService:
         downloaded = 0
         last_logged_mb = 0
         last_progress = self.export_job.progress_percentage
+        start_time = time.time()
+        last_speed_update = start_time
 
         with open(dest_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
@@ -297,6 +308,18 @@ class OVFExportLeaseService:
                         if self.export_job.status == 'cancelled':
                             logger.info(f"[OVF-EXPORT] Export annulé pendant le téléchargement à {downloaded_mb:.1f} MB")
                             raise Exception("Export annulé par l'utilisateur")
+
+                        # Calculer la vitesse de téléchargement (tous les 2 secondes)
+                        current_time = time.time()
+                        if current_time - last_speed_update >= 2.0:
+                            elapsed_time = current_time - start_time
+                            if elapsed_time > 0:
+                                speed_mbps = global_downloaded / (1024 * 1024) / elapsed_time
+                                self.export_job.download_speed_mbps = round(speed_mbps, 2)
+                            last_speed_update = current_time
+
+                        # Mettre à jour les bytes téléchargés
+                        self.export_job.downloaded_bytes = global_downloaded
 
                         if total_size > 0:
                             # CAS 1: Règle de trois si taille totale connue

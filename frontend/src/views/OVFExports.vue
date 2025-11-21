@@ -125,20 +125,33 @@
                   <div class="flex items-center justify-between text-xs">
                     <span class="text-gray-600">
                       {{ exportJob.status === 'running' ?
-                         (exportJob.progress_percentage < 10 ? 'Snapshot...' :
-                          exportJob.progress_percentage < 75 ? 'Téléchargement...' :
-                          exportJob.progress_percentage < 80 ? 'Configuration...' :
-                          exportJob.progress_percentage < 85 ? 'Nettoyage...' : 'Finalisation...')
+                         (exportJob.progress_percentage < 10 ? 'Initialisation...' :
+                          exportJob.progress_percentage < 85 ? 'Téléchargement...' :
+                          exportJob.progress_percentage < 95 ? 'Finalisation...' : 'Vérification...')
                          : '' }}
                     </span>
                     <span class="font-medium text-gray-800">{{ exportJob.progress_percentage || 0 }}%</span>
                   </div>
+
+                  <!-- Barre de progression -->
                   <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
                     <div
                       :class="getProgressBarClass(exportJob.status)"
                       class="h-2.5 rounded-full transition-all duration-300 ease-linear"
                       :style="{ width: exportJob.progress_percentage + '%' }"
                     ></div>
+                  </div>
+
+                  <!-- Détails de téléchargement (poids et vitesse) -->
+                  <div v-if="exportJob.status === 'running' && exportJob.total_bytes > 0" class="text-xs text-gray-500 mt-1">
+                    <div class="flex items-center justify-between">
+                      <span>
+                        📦 {{ formatBytes(exportJob.downloaded_bytes) }} / {{ formatBytes(exportJob.total_bytes) }}
+                      </span>
+                      <span v-if="exportJob.download_speed_mbps > 0" class="text-blue-600">
+                        ⚡ {{ exportJob.download_speed_mbps }} MB/s
+                      </span>
+                    </div>
                   </div>
                 </div>
               </td>
@@ -404,6 +417,14 @@ function formatSize(sizeMb) {
   if (!sizeMb || sizeMb === 0) return '-'
   if (sizeMb < 1024) return `${sizeMb.toFixed(2)} MB`
   return `${(sizeMb / 1024).toFixed(2)} GB`
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
 }
 
 function formatDate(dateString) {
