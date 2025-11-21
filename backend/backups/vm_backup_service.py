@@ -221,9 +221,7 @@ class VMBackupService:
         self.download_vmdk_file(vmdk_url, dest_file)
         file_size = os.path.getsize(dest_file) if os.path.exists(dest_file) else 0
         total_size += file_size
-        # Mettre à jour les bytes téléchargés
-        self.backup_job.downloaded_bytes += file_size
-        self.backup_job.save()
+        # Note: downloaded_bytes est déjà incrémenté dans download_vmdk_file() chunk par chunk
 
         # Parser le descriptor pour trouver le parent et l'extent
         descriptor_info = self.parse_vmdk_descriptor(dest_file)
@@ -259,10 +257,8 @@ class VMBackupService:
                 self.download_vmdk_file(data_url, data_dest_file)
                 data_size = os.path.getsize(data_dest_file) if os.path.exists(data_dest_file) else 0
                 total_size += data_size
-                # Mettre à jour les bytes téléchargés
-                self.backup_job.downloaded_bytes += data_size
-                self.backup_job.save()
-                logger.info(f"[VM-BACKUP] Fichier données téléchargé: {data_dest_file}")
+                # Note: downloaded_bytes est déjà incrémenté dans download_vmdk_file() chunk par chunk
+                logger.info(f"[VM-BACKUP] Fichier données téléchargé: {data_dest_file} ({data_size / (1024*1024):.1f} MB)")
             except Exception as e:
                 logger.error(f"[VM-BACKUP] Erreur téléchargement données: {e}")
                 raise
@@ -328,11 +324,14 @@ class VMBackupService:
                         f.write(chunk)
                         downloaded += len(chunk)
 
+                        # INCRÉMENTER downloaded_bytes EN TEMPS RÉEL (chunk par chunk)
+                        self.backup_job.downloaded_bytes += len(chunk)
+
                         # Mettre à jour tous les 1 MB téléchargés
                         downloaded_mb = downloaded / (1024 * 1024)
                         if downloaded_mb >= last_logged_mb + 1 or downloaded >= file_size:
-                            # Vérifier si le backup a été annulé
-                            self.backup_job.refresh_from_db()
+                            # Vérifier si le backup a été annulé (refresh SEULEMENT le status pour ne pas écraser downloaded_bytes)
+                            self.backup_job.refresh_from_db(fields=['status'])
                             if self.backup_job.status == 'cancelled':
                                 logger.info(f"[VM-BACKUP] Backup annulé pendant le téléchargement")
                                 raise Exception("Backup annulé par l'utilisateur")
@@ -345,9 +344,6 @@ class VMBackupService:
                                     speed_mbps = (self.backup_job.downloaded_bytes / (1024 * 1024)) / elapsed_time
                                     self.backup_job.download_speed_mbps = round(speed_mbps, 2)
                                 last_speed_update = current_time
-
-                            # Mettre à jour les bytes téléchargés (cumulatif)
-                            # Note: downloaded_bytes est mis à jour par download_vmdk_chain
 
                             # Calculer progression si total_bytes connu
                             if self.backup_job.total_bytes > 0:
@@ -363,6 +359,12 @@ class VMBackupService:
                                 total_mb = self.backup_job.total_bytes / (1024 * 1024)
                                 global_downloaded_mb = self.backup_job.downloaded_bytes / (1024 * 1024)
                                 logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB / {total_mb:.1f} MB ({download_percentage:.1f}%) - Progression: {global_progress}%")
+                            else:
+                                # Si pas de total connu, afficher juste les MB téléchargés et la vitesse
+                                self.backup_job.save()
+                                global_downloaded_mb = self.backup_job.downloaded_bytes / (1024 * 1024)
+                                speed = self.backup_job.download_speed_mbps
+                                logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB ({speed:.1f} MB/s)")
 
                             last_logged_mb = int(downloaded_mb)
 
@@ -392,18 +394,12 @@ class VMBackupService:
 
             logger.info(f"[VM-BACKUP] Destination: {backup_path}")
 
-            # Estimer la taille totale à télécharger
-            estimated_total_bytes = 0
-            for device in self.vm.config.hardware.device:
-                if isinstance(device, vim.vm.device.VirtualDisk):
-                    # Utiliser la capacité du disque comme estimation
-                    # Note: peut être plus que la taille réelle (thin provisioning)
-                    estimated_total_bytes += device.capacityInKB * 1024
-
-            if estimated_total_bytes > 0:
-                self.backup_job.total_bytes = estimated_total_bytes
-                self.backup_job.save()
-                logger.info(f"[VM-BACKUP] Taille estimée: {estimated_total_bytes / (1024**3):.2f} GB")
+            # Note: On ne peut pas estimer la taille totale à l'avance car:
+            # - device.capacityInKB donne la capacité ALLOUÉE (ex: 1 TB) pas la taille réelle
+            # - Les snapshots créent une chaîne de fichiers delta de tailles variables
+            # On affichera donc la progression en MB téléchargés et vitesse en temps réel
+            # sans pourcentage global, ce qui est plus précis
+            logger.info(f"[VM-BACKUP] Téléchargement des VMDKs (progression en temps réel)")
 
             # Récupérer les disques de la VM
             for device in self.vm.config.hardware.device:
