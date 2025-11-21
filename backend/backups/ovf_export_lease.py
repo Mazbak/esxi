@@ -110,17 +110,23 @@ class OVFExportLeaseService:
                     else:
                         filename = target_id or f"file-{i}"
 
-                # Requête HEAD pour obtenir la vraie taille (sans télécharger)
+                # Requête GET avec stream=True pour obtenir Content-Length sans télécharger
+                # (ESXi ne supporte pas HEAD, retourne HTTP 501)
                 try:
-                    head_response = requests.head(
+                    get_response = requests.get(
                         url,
                         auth=(self.esxi_user, self.esxi_pass),
                         verify=False,
+                        stream=True,  # Ne pas télécharger le contenu
                         timeout=10
                     )
 
-                    if head_response.status_code == 200:
-                        real_size = int(head_response.headers.get('Content-Length', 0))
+                    if get_response.status_code == 200:
+                        real_size = int(get_response.headers.get('Content-Length', 0))
+
+                        # Fermer immédiatement la connexion sans télécharger le contenu
+                        get_response.close()
+
                         if real_size > 0:
                             total_bytes += real_size
                             size_mb = real_size / (1024 * 1024)
@@ -142,10 +148,11 @@ class OVFExportLeaseService:
                             })
                     else:
                         # Fichier optionnel qui n'existe pas (ex: NVRAM)
-                        logger.warning(f"[OVF-EXPORT] Pre-scan: {filename} non disponible (HTTP {head_response.status_code})")
+                        logger.warning(f"[OVF-EXPORT] Pre-scan: {filename} non disponible (HTTP {get_response.status_code})")
+                        get_response.close()
 
                 except Exception as e:
-                    logger.warning(f"[OVF-EXPORT] Pre-scan HEAD failed for {filename}: {e}")
+                    logger.warning(f"[OVF-EXPORT] Pre-scan GET failed for {filename}: {e}")
                     # Ajouter quand même à la liste avec taille 0
                     file_info_list.append({
                         'url': url,
