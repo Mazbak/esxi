@@ -59,32 +59,39 @@ class VMBackupService:
             self.backup_job.download_speed_mbps = 0
             self.backup_job.save()
 
-            # 1. Créer snapshot
+            # 1. Créer snapshot (1% -> 5%)
             logger.info(f"[VM-BACKUP] Création snapshot...")
             self.create_snapshot()
-            self.backup_job.progress_percentage = 10
+            self.backup_job.progress_percentage = 5
             self.backup_job.save()
 
-            # 2. Copier les VMDKs
+            # 2. Copier les VMDKs (5% -> 90%)
             logger.info(f"[VM-BACKUP] Copie des VMDKs...")
             vmdk_files = self.copy_vmdks()
             self.backup_job.vmdk_files = vmdk_files
             self.backup_job.progress_percentage = 90
             self.backup_job.save()
 
-            # 3. Sauvegarder la configuration
-            logger.info(f"[VM-BACKUP] Sauvegarde configuration...")
-            self.save_vm_configuration()
+            # 3. Télécharger fichiers config (.vmx, .nvram, .vmsd, .vmsn, .log) (90% -> 95%)
+            logger.info(f"[VM-BACKUP] Téléchargement fichiers configuration VM...")
+            config_files = self.download_vm_files()
             self.backup_job.progress_percentage = 95
             self.backup_job.save()
 
-            # 4. Supprimer le snapshot
-            logger.info(f"[VM-BACKUP] Suppression snapshot...")
-            self.remove_snapshot()
+            # 4. Sauvegarder métadonnées JSON (95% -> 98%)
+            logger.info(f"[VM-BACKUP] Sauvegarde métadonnées...")
+            self.save_vm_configuration()
             self.backup_job.progress_percentage = 98
             self.backup_job.save()
 
-            # Finaliser
+            # 5. Supprimer le snapshot (98% -> 99%)
+            logger.info(f"[VM-BACKUP] Suppression snapshot...")
+            self.remove_snapshot()
+            self.backup_job.progress_percentage = 99
+            self.backup_job.save()
+
+            # Finaliser (99% -> 100%)
+            self.backup_job.progress_percentage = 100
             self.backup_job.status = 'completed'
             self.backup_job.completed_at = timezone.now()
             self.backup_job.calculate_duration()
@@ -403,9 +410,9 @@ class VMBackupService:
                             # Calculer progression si total_bytes connu
                             if self.backup_job.total_bytes > 0:
                                 download_percentage = (self.backup_job.downloaded_bytes / self.backup_job.total_bytes) * 100
-                                # Progression: 10% (snapshot) + 80% (download) + 10% (finalization)
-                                # Download représente 10-90% de la progression totale (80%)
-                                global_progress = 10 + int((download_percentage / 100) * 80)
+                                # Progression: 1-5% (snapshot) + 5-90% (download VMDKs) + 90-95% (fichiers config) + 95-99% (finalization) + 100% (completed)
+                                # Download VMDKs représente 5-90% de la progression totale (85%)
+                                global_progress = 5 + int((download_percentage / 100) * 85)
                                 global_progress = min(global_progress, 90)
 
                                 self.backup_job.progress_percentage = global_progress
@@ -550,6 +557,100 @@ class VMBackupService:
         except Exception as e:
             logger.error(f"[VM-BACKUP] Erreur copie VMDKs: {e}")
             raise Exception(f"Échec copie VMDKs: {str(e)}")
+
+    def download_vm_files(self):
+        """
+        Télécharge tous les fichiers de configuration de la VM (.vmx, .nvram, .vmsd, .vmsn, .log)
+        Nécessaire pour une restauration complète et identique de la VM
+        """
+        try:
+            backup_path = self.backup_job.backup_full_path
+
+            # Obtenir le chemin du dossier de la VM
+            # Format: [datastore] VM_Folder/VM.vmx
+            vm_path = self.vm.config.files.vmPathName
+            datastore_name = vm_path.split(']')[0].strip('[')
+            vm_folder = os.path.dirname(vm_path.split(']')[1].strip().lstrip('/'))
+
+            logger.info(f"[VM-BACKUP] Téléchargement fichiers de configuration depuis: [{datastore_name}] {vm_folder}")
+
+            # Récupérer le datastore
+            datastore = None
+            for ds in self.vm.datastore:
+                if ds.name == datastore_name:
+                    datastore = ds
+                    break
+
+            if not datastore:
+                logger.warning(f"[VM-BACKUP] Datastore non trouvé: {datastore_name}")
+                return []
+
+            # Obtenir le datacenter
+            dc = self.vm.runtime.host.parent
+            while not isinstance(dc, vim.Datacenter):
+                dc = dc.parent
+
+            # Lister tous les fichiers dans le dossier de la VM
+            search_spec = vim.host.DatastoreBrowser.SearchSpec()
+            # Chercher tous les fichiers de configuration
+            search_spec.matchPattern = ["*.vmx", "*.nvram", "*.vmsd", "*.vmsn", "*.log"]
+            search_spec.details = vim.host.DatastoreBrowser.FileInfo.Details()
+            search_spec.details.fileSize = True
+            search_spec.details.fileType = True
+
+            search_path = f"[{datastore.name}] {vm_folder}"
+
+            # Lancer la recherche
+            task = datastore.browser.SearchDatastore_Task(datastorePath=search_path, searchSpec=search_spec)
+            WaitForTask(task)
+
+            downloaded_files = []
+
+            if task.info.state == vim.TaskInfo.State.success:
+                result = task.info.result
+                if hasattr(result, 'file'):
+                    for file_info in result.file:
+                        filename = file_info.path
+                        file_size_mb = file_info.fileSize / (1024 * 1024)
+
+                        # Construire l'URL de téléchargement
+                        if vm_folder:
+                            remote_path = f"{vm_folder}/{filename}"
+                        else:
+                            remote_path = filename
+
+                        file_url = f"https://{self.esxi_host}/folder/{remote_path}?dcPath={dc.name}&dsName={datastore_name}"
+                        dest_file = os.path.join(backup_path, filename)
+
+                        logger.info(f"[VM-BACKUP] Téléchargement config: {filename} ({file_size_mb:.2f} MB)")
+
+                        try:
+                            # Télécharger le fichier (sans progression car généralement petits)
+                            session = requests.Session()
+                            session.auth = (self.esxi_user, self.esxi_pass)
+                            session.verify = False
+
+                            response = session.get(file_url, timeout=60)
+                            response.raise_for_status()
+
+                            with open(dest_file, 'wb') as f:
+                                f.write(response.content)
+
+                            downloaded_files.append(filename)
+                            logger.info(f"[VM-BACKUP]   -> OK: {filename}")
+
+                        except Exception as e:
+                            logger.warning(f"[VM-BACKUP]   -> ERREUR {filename}: {e}")
+                            # Continuer même si un fichier échoue
+
+            logger.info(f"[VM-BACKUP] Fichiers config téléchargés: {len(downloaded_files)}")
+
+            return downloaded_files
+
+        except Exception as e:
+            logger.error(f"[VM-BACKUP] Erreur téléchargement fichiers config: {e}")
+            # Ne pas lever d'exception, le backup des VMDKs est plus important
+            return []
 
     def save_vm_configuration(self):
         """Sauvegarde la configuration de la VM (fichier .vmx simulé)"""
