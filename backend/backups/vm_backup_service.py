@@ -138,6 +138,61 @@ class VMBackupService:
             logger.error(f"[VM-BACKUP] Erreur création snapshot: {e}")
             raise Exception(f"Échec création snapshot: {str(e)}")
 
+    def get_vmdk_chain_size(self, vmdk_filename, datastore, dc_name):
+        """
+        Calcule la taille réelle de toute la chaîne VMDK (tenant compte du thin provisioning)
+
+        Args:
+            vmdk_filename: Nom du fichier VMDK (ex: "SQL SERVER/SQL SERVER-000007.vmdk")
+            datastore: Objet pyVmomi datastore
+            dc_name: Nom du datacenter
+
+        Returns:
+            int: Taille totale en bytes de tous les fichiers de la chaîne
+        """
+        import re
+
+        total_size = 0
+        vmdk_dir = os.path.dirname(vmdk_filename)
+
+        try:
+            # Rechercher tous les fichiers dans le dossier de la VM
+            search_spec = vim.host.DatastoreBrowser.SearchSpec()
+            search_spec.matchPattern = ["*.vmdk", "*-delta.vmdk", "*-flat.vmdk"]
+            search_spec.details = vim.host.DatastoreBrowser.FileInfo.Details()
+            search_spec.details.fileSize = True
+            search_spec.details.fileType = True
+            search_spec.details.modification = False
+
+            # Construire le chemin de recherche
+            if vmdk_dir:
+                search_path = f"[{datastore.name}] {vmdk_dir}"
+            else:
+                search_path = f"[{datastore.name}]"
+
+            logger.info(f"[VM-BACKUP] Calcul taille réelle (thin provisioning): {search_path}")
+
+            # Lancer la recherche
+            task = datastore.browser.SearchDatastore_Task(datastorePath=search_path, searchSpec=search_spec)
+            WaitForTask(task)
+
+            if task.info.state == vim.TaskInfo.State.success:
+                result = task.info.result
+                if hasattr(result, 'file'):
+                    for file_info in result.file:
+                        # Additionner la taille de tous les fichiers VMDK
+                        if hasattr(file_info, 'fileSize'):
+                            total_size += file_info.fileSize
+                            logger.info(f"[VM-BACKUP] Fichier: {file_info.path} ({file_info.fileSize / (1024*1024):.1f} MB)")
+
+            logger.info(f"[VM-BACKUP] Taille totale réelle (thin): {total_size / (1024*1024):.1f} MB ({total_size / (1024*1024*1024):.2f} GB)")
+            return total_size
+
+        except Exception as e:
+            logger.warning(f"[VM-BACKUP] Impossible de calculer la taille: {e}")
+            # Retourner 0 si échec, la progression s'affichera sans pourcentage
+            return 0
+
     def parse_vmdk_descriptor(self, descriptor_path):
         """
         Parse un fichier descriptor VMDK pour extraire les informations importantes
@@ -394,12 +449,45 @@ class VMBackupService:
 
             logger.info(f"[VM-BACKUP] Destination: {backup_path}")
 
-            # Note: On ne peut pas estimer la taille totale à l'avance car:
-            # - device.capacityInKB donne la capacité ALLOUÉE (ex: 1 TB) pas la taille réelle
-            # - Les snapshots créent une chaîne de fichiers delta de tailles variables
-            # On affichera donc la progression en MB téléchargés et vitesse en temps réel
-            # sans pourcentage global, ce qui est plus précis
-            logger.info(f"[VM-BACKUP] Téléchargement des VMDKs (progression en temps réel)")
+            # PHASE 1: Calculer la taille totale réelle (thin provisioning)
+            # en interrogeant le datastore pour obtenir les tailles réelles des fichiers
+            logger.info(f"[VM-BACKUP] Phase 1: Calcul de la taille totale à télécharger...")
+            total_backup_size = 0
+
+            # Récupérer les disques de la VM pour calculer la taille totale
+            for device in self.vm.config.hardware.device:
+                if isinstance(device, vim.vm.device.VirtualDisk):
+                    if hasattr(device.backing, 'fileName'):
+                        vmdk_file = device.backing.fileName
+                        vmdk_filename = vmdk_file.split(']')[1].strip().lstrip('/')
+                        datastore_name = vmdk_file.split(']')[0].strip('[')
+
+                        # Récupérer le datastore
+                        datastore = None
+                        for ds in self.vm.datastore:
+                            if ds.name == datastore_name:
+                                datastore = ds
+                                break
+
+                        if datastore:
+                            dc = self.vm.runtime.host.parent
+                            while not isinstance(dc, vim.Datacenter):
+                                dc = dc.parent
+
+                            # Calculer la taille réelle de la chaîne VMDK (thin provisioning)
+                            chain_size = self.get_vmdk_chain_size(vmdk_filename, datastore, dc.name)
+                            total_backup_size += chain_size
+
+            # Enregistrer la taille totale
+            if total_backup_size > 0:
+                self.backup_job.total_bytes = total_backup_size
+                self.backup_job.save()
+                logger.info(f"[VM-BACKUP] Taille totale à télécharger: {total_backup_size / (1024*1024):.1f} MB ({total_backup_size / (1024*1024*1024):.2f} GB)")
+            else:
+                logger.warning(f"[VM-BACKUP] Impossible de calculer la taille totale, progression sans pourcentage")
+
+            # PHASE 2: Télécharger les VMDKs avec progression en temps réel
+            logger.info(f"[VM-BACKUP] Phase 2: Téléchargement des VMDKs...")
 
             # Récupérer les disques de la VM
             for device in self.vm.config.hardware.device:
