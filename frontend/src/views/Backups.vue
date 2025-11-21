@@ -353,6 +353,8 @@ async function cancelJob(job) {
   if (confirm('Voulez-vous vraiment annuler cette sauvegarde?')) {
     try {
       await vmOpsStore.cancelVMBackup(job.id)
+      // Rafraîchir immédiatement pour voir le changement de status
+      await vmOpsStore.fetchVMBackups()
     } catch (err) {
       toast.error(`Erreur lors de l'annulation: ${err.response?.data?.message || err.message}`)
     }
