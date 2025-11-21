@@ -335,6 +335,9 @@ async function handleCreateJob(formData) {
     // Fermer le modal IMMÉDIATEMENT (le backup s'exécute en arrière-plan)
     showCreateModal.value = false
 
+    // RAFRAÎCHIR IMMÉDIATEMENT la liste pour afficher le nouveau backup
+    await vmOpsStore.fetchVMBackups()
+
     // Notification de succès
     const selectedVM = virtualMachines.value.find(vm => vm.id === formData.virtual_machine)
     const vmName = selectedVM ? selectedVM.name : 'VM'
