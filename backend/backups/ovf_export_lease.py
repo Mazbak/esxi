@@ -98,9 +98,10 @@ class OVFExportLeaseService:
                             vm_total_bytes += usage.committed
 
             # Apply ratio to estimate OVF export size
-            # Empirically determined: OVF exports are typically ~35% of total VM size
+            # Empirically determined: OVF exports are typically ~34.6% of total VM size
+            # Based on real measurements: 2.83 GB export / 8.17 GB VM = 0.3464
             # This accounts for thin provisioning, compression, and exclusion of swap/logs
-            OVF_EXPORT_RATIO = 0.35
+            OVF_EXPORT_RATIO = 0.346
             estimated_total_bytes = int(vm_total_bytes * OVF_EXPORT_RATIO)
 
             # Set estimated total bytes (this will be our baseline for progress)
