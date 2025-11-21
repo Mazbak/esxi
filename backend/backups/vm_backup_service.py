@@ -176,7 +176,20 @@ class VMBackupService:
                 quiesce=True   # Quiesce pour cohérence du filesystem
             )
 
-            WaitForTask(task)
+            # Attendre la tâche avec progression (1% -> 5%)
+            import time
+            progress = 1
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(0.5)
+                progress = min(progress + 1, 4)
+                self.backup_job.progress_percentage = progress
+                self.backup_job.save()
+
+                # Vérifier si annulé
+                self.check_cancelled()
+
+            if task.info.state == vim.TaskInfo.State.error:
+                raise Exception(f"Erreur création snapshot: {task.info.error.msg}")
 
             # Récupérer le snapshot créé
             self.snapshot = self.vm.snapshot.currentSnapshot
