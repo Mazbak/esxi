@@ -134,6 +134,141 @@ class VMBackupService:
             logger.error(f"[VM-BACKUP] Erreur création snapshot: {e}")
             raise Exception(f"Échec création snapshot: {str(e)}")
 
+    def parse_vmdk_descriptor(self, descriptor_path):
+        """
+        Parse un fichier descriptor VMDK pour extraire les informations importantes
+
+        Args:
+            descriptor_path: Chemin vers le fichier descriptor VMDK
+
+        Returns:
+            dict: Informations extraites (parent, extent, etc.)
+        """
+        info = {
+            'parent': None,
+            'extent_file': None
+        }
+
+        try:
+            with open(descriptor_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+                # Chercher le parent (snapshot chain)
+                for line in content.split('\n'):
+                    line = line.strip()
+
+                    # Parent file hint (snapshots)
+                    if line.startswith('parentFileNameHint'):
+                        # Format: parentFileNameHint="SQL SERVER-000006.vmdk"
+                        parent = line.split('=')[1].strip().strip('"')
+                        info['parent'] = parent
+                        logger.info(f"[VM-BACKUP] Parent VMDK trouvé: {parent}")
+
+                    # Extent file (fichier de données)
+                    elif line.startswith('RW') or line.startswith('RDONLY'):
+                        # Format: RW 16777216 VMFSSPARSE "SQL SERVER-000007-delta.vmdk"
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            extent = parts[3].strip('"')
+                            info['extent_file'] = extent
+                            logger.info(f"[VM-BACKUP] Extent file trouvé: {extent}")
+
+        except Exception as e:
+            logger.warning(f"[VM-BACKUP] Erreur parsing descriptor: {e}")
+
+        return info
+
+    def download_vmdk_chain(self, vmdk_filename, datastore_name, dc_name, backup_path, downloaded_files_set):
+        """
+        Télécharge récursivement toute la chaîne VMDK (parent + deltas)
+
+        Args:
+            vmdk_filename: Nom du fichier VMDK (descriptor)
+            datastore_name: Nom du datastore
+            dc_name: Nom du datacenter
+            backup_path: Chemin de destination
+            downloaded_files_set: Set des fichiers déjà téléchargés (pour éviter doublons)
+
+        Returns:
+            int: Taille totale téléchargée en bytes
+        """
+        import re
+
+        # Éviter les doublons
+        if vmdk_filename in downloaded_files_set:
+            logger.info(f"[VM-BACKUP] Fichier déjà téléchargé: {vmdk_filename}")
+            return 0
+
+        downloaded_files_set.add(vmdk_filename)
+        total_size = 0
+
+        # URL du descriptor
+        vmdk_url = f"https://{self.esxi_host}/folder/{vmdk_filename}?dcPath={dc_name}&dsName={datastore_name}"
+        dest_file = os.path.join(backup_path, os.path.basename(vmdk_filename))
+
+        # Télécharger le descriptor
+        logger.info(f"[VM-BACKUP] Téléchargement descriptor: {vmdk_filename}")
+        self.download_vmdk_file(vmdk_url, dest_file)
+        total_size += os.path.getsize(dest_file) if os.path.exists(dest_file) else 0
+
+        # Parser le descriptor pour trouver le parent et l'extent
+        descriptor_info = self.parse_vmdk_descriptor(dest_file)
+
+        # Télécharger le fichier de données (flat ou delta)
+        is_snapshot = re.search(r'-\d{6}\.vmdk$', vmdk_filename)
+
+        if is_snapshot:
+            # Snapshot: chercher le fichier -delta.vmdk
+            data_filename = vmdk_filename.replace('.vmdk', '-delta.vmdk')
+        else:
+            # VMDK normal: chercher le fichier -flat.vmdk
+            data_filename = vmdk_filename.replace('.vmdk', '-flat.vmdk')
+
+        # Utiliser l'extent du descriptor si disponible
+        if descriptor_info['extent_file']:
+            # L'extent file peut contenir le chemin complet, extraire juste le nom
+            extent_basename = os.path.basename(descriptor_info['extent_file'])
+            # Reconstruire le chemin avec le même dossier que le descriptor
+            vmdk_dir = os.path.dirname(vmdk_filename)
+            if vmdk_dir:
+                data_filename = f"{vmdk_dir}/{extent_basename}"
+            else:
+                data_filename = extent_basename
+
+        if data_filename not in downloaded_files_set:
+            downloaded_files_set.add(data_filename)
+            data_url = f"https://{self.esxi_host}/folder/{data_filename}?dcPath={dc_name}&dsName={datastore_name}"
+            data_dest_file = os.path.join(backup_path, os.path.basename(data_filename))
+
+            logger.info(f"[VM-BACKUP] Téléchargement données: {data_filename}")
+            try:
+                self.download_vmdk_file(data_url, data_dest_file)
+                total_size += os.path.getsize(data_dest_file) if os.path.exists(data_dest_file) else 0
+                logger.info(f"[VM-BACKUP] Fichier données téléchargé: {data_dest_file}")
+            except Exception as e:
+                logger.error(f"[VM-BACKUP] Erreur téléchargement données: {e}")
+                raise
+
+        # Télécharger récursivement le parent
+        if descriptor_info['parent']:
+            parent_filename = descriptor_info['parent']
+            # Le parent peut être relatif, construire le chemin complet
+            vmdk_dir = os.path.dirname(vmdk_filename)
+            if vmdk_dir and not parent_filename.startswith(vmdk_dir):
+                parent_filename = f"{vmdk_dir}/{parent_filename}"
+
+            logger.info(f"[VM-BACKUP] ↳ Téléchargement parent: {parent_filename}")
+            parent_size = self.download_vmdk_chain(
+                parent_filename,
+                datastore_name,
+                dc_name,
+                backup_path,
+                downloaded_files_set
+            )
+            total_size += parent_size
+
+        return total_size
+
     def download_vmdk_file(self, vmdk_url, dest_path, chunk_size=8192*1024):
         """
         Télécharge un fichier VMDK depuis ESXi via HTTP
@@ -237,69 +372,35 @@ class VMBackupService:
                             while not isinstance(dc, vim.Datacenter):
                                 dc = dc.parent
 
-                            # Construction de l'URL pour téléchargement via HTTP
-                            # Format: https://esxi/folder/path?dcPath=datacenter&dsName=datastore
-                            vmdk_url = f"https://{self.esxi_host}/folder/{vmdk_filename}?dcPath={dc.name}&dsName={datastore_name}"
+                            # Télécharger toute la chaîne VMDK (récursif: snapshot + tous les parents)
+                            # Cela permet d'avoir un backup complet et restaurable
+                            logger.info(f"[VM-BACKUP] Téléchargement chaîne VMDK complète pour: {vmdk_filename}")
+                            downloaded_files_set = set()
 
-                            # Chemin de destination local
-                            dest_file = os.path.join(backup_path, os.path.basename(vmdk_filename))
+                            total_size_bytes = self.download_vmdk_chain(
+                                vmdk_filename,
+                                datastore_name,
+                                dc.name,
+                                backup_path,
+                                downloaded_files_set
+                            )
 
-                            # Télécharger le fichier descriptor VMDK via HTTP
-                            logger.info(f"[VM-BACKUP] Téléchargement descriptor VMDK...")
-                            self.download_vmdk_file(vmdk_url, dest_file)
-
-                            # Télécharger aussi le fichier de données VMDK
-                            # Les VMDKs VMware sont composés de 2 fichiers:
-                            # - descriptor (.vmdk) : petit fichier texte avec metadata
-                            # - données : gros fichier binaire avec les données réelles
-                            #   * VMDK normal: -flat.vmdk
-                            #   * VMDK snapshot: -delta.vmdk (car c'est un delta du parent)
-                            data_dest_file = None
-                            if vmdk_filename.endswith('.vmdk'):
-                                # Détecter si c'est un snapshot (contient -000001, -000002, etc.)
-                                import re
-                                is_snapshot = re.search(r'-\d{6}\.vmdk$', vmdk_filename)
-
-                                if is_snapshot:
-                                    # Snapshot: chercher le fichier -delta.vmdk
-                                    data_filename = vmdk_filename.replace('.vmdk', '-delta.vmdk')
-                                    logger.info(f"[VM-BACKUP] Snapshot détecté, recherche fichier delta...")
-                                else:
-                                    # VMDK normal: chercher le fichier -flat.vmdk
-                                    data_filename = vmdk_filename.replace('.vmdk', '-flat.vmdk')
-                                    logger.info(f"[VM-BACKUP] VMDK normal, recherche fichier flat...")
-
-                                data_url = f"https://{self.esxi_host}/folder/{data_filename}?dcPath={dc.name}&dsName={datastore_name}"
-                                data_dest_file = os.path.join(backup_path, os.path.basename(data_filename))
-
-                                logger.info(f"[VM-BACKUP] Téléchargement données VMDK: {data_filename}")
-                                try:
-                                    self.download_vmdk_file(data_url, data_dest_file)
-                                    logger.info(f"[VM-BACKUP] Fichier données téléchargé: {data_dest_file}")
-                                except Exception as data_error:
-                                    # Si le fichier de données n'existe pas, logger l'erreur
-                                    logger.error(f"[VM-BACKUP] ERREUR: Impossible de télécharger le fichier de données: {data_error}")
-                                    logger.error(f"[VM-BACKUP] URL tentée: {data_url}")
-                                    raise
-
-                            # Calculer la taille totale (descriptor + fichier de données)
-                            total_size_mb = 0
-                            if os.path.exists(dest_file):
-                                total_size_mb += os.path.getsize(dest_file) / (1024 * 1024)
-                            if data_dest_file and os.path.exists(data_dest_file):
-                                total_size_mb += os.path.getsize(data_dest_file) / (1024 * 1024)
+                            total_size_mb = total_size_bytes / (1024 * 1024)
 
                             # Enregistrer les métadonnées
                             vmdk_info = {
                                 'filename': vmdk_filename,
                                 'size_gb': device.capacityInKB / (1024 * 1024),
-                                'dest_path': dest_file,
+                                'dest_path': os.path.join(backup_path, os.path.basename(vmdk_filename)),
                                 'datastore': datastore_name,
-                                'size_mb': total_size_mb
+                                'size_mb': total_size_mb,
+                                'chain_files': list(downloaded_files_set)  # Liste tous les fichiers de la chaîne
                             }
                             vmdk_files.append(vmdk_info)
 
-                            logger.info(f"[VM-BACKUP] VMDK copié: {vmdk_filename} ({total_size_mb:.2f} MB)")
+                            logger.info(f"[VM-BACKUP] Chaîne VMDK complète téléchargée: {vmdk_filename}")
+                            logger.info(f"[VM-BACKUP]   Fichiers dans la chaîne: {len(downloaded_files_set)}")
+                            logger.info(f"[VM-BACKUP]   Taille totale: {total_size_mb:.2f} MB")
 
             return vmdk_files
 
