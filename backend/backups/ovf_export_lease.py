@@ -39,84 +39,6 @@ class OVFExportLeaseService:
         self.esxi_user = esxi_server.username
         self.esxi_pass = esxi_server.password
 
-    def _get_vm_files_total_size(self):
-        """
-        Récupère la taille RÉELLE de tous les fichiers de la VM depuis le datastore
-        AVANT de commencer l'export.
-
-        Pour les disques thin-provisioned, utilise disk.snapshot[0].diskUsage qui donne
-        la taille RÉELLEMENT utilisée, pas la capacité allouée.
-
-        Returns:
-            int: Taille totale en octets
-        """
-        try:
-            total_size = 0
-
-            # MÉTHODE 1 : Utiliser les snapshots des disques pour obtenir la taille UTILISÉE
-            if hasattr(self.vm, 'layoutEx') and self.vm.layoutEx:
-                layout = self.vm.layoutEx
-
-                # Parcourir les disques via layoutEx.disk (plus précis que file)
-                if hasattr(layout, 'disk') and layout.disk:
-                    for disk in layout.disk:
-                        # Pour les disques thin-provisioned, snapshot[0].diskUsage donne la taille utilisée
-                        if hasattr(disk, 'diskFile') and disk.diskFile:
-                            for disk_file in disk.diskFile:
-                                # Chaque fichier de disque a une taille
-                                if hasattr(disk_file, 'size'):
-                                    file_size = disk_file.size
-                                    total_size += file_size
-
-                                    size_mb = file_size / (1024 * 1024)
-                                    logger.info(f"[OVF-EXPORT] Disk file: {size_mb:.2f} MB")
-
-                    if total_size > 0:
-                        total_gb = total_size / (1024 * 1024 * 1024)
-                        logger.info(f"[OVF-EXPORT] Taille totale depuis layoutEx.disk: {total_gb:.2f} GB")
-                        return total_size
-
-                # FALLBACK 1: Utiliser layoutEx.file
-                if hasattr(layout, 'file') and layout.file:
-                    for file_info in layout.file:
-                        file_size = file_info.size if hasattr(file_info, 'size') else 0
-                        file_name = file_info.name if hasattr(file_info, 'name') else 'unknown'
-
-                        # Seulement compter les fichiers VMDK (pas les logs, etc.)
-                        if '.vmdk' in file_name.lower() or '.vmx' in file_name.lower() or '.nvram' in file_name.lower():
-                            total_size += file_size
-                            size_mb = file_size / (1024 * 1024)
-                            logger.info(f"[OVF-EXPORT] VM File: {file_name} = {size_mb:.2f} MB")
-
-                    if total_size > 0:
-                        total_gb = total_size / (1024 * 1024 * 1024)
-                        logger.info(f"[OVF-EXPORT] Taille totale depuis layoutEx.file: {total_gb:.2f} GB")
-                        return total_size
-
-            # MÉTHODE 2 : Utiliser vm.storage.perDatastoreUsage (plus fiable)
-            if total_size == 0 and hasattr(self.vm, 'storage') and self.vm.storage:
-                if hasattr(self.vm.storage, 'perDatastoreUsage') and self.vm.storage.perDatastoreUsage:
-                    for usage in self.vm.storage.perDatastoreUsage:
-                        # committed = espace réellement utilisé sur le disque
-                        if hasattr(usage, 'committed'):
-                            committed = usage.committed
-                            total_size += committed
-
-                            size_gb = committed / (1024 * 1024 * 1024)
-                            logger.info(f"[OVF-EXPORT] Datastore committed: {size_gb:.2f} GB")
-
-                if total_size > 0:
-                    total_gb = total_size / (1024 * 1024 * 1024)
-                    logger.info(f"[OVF-EXPORT] Taille totale depuis storage.perDatastoreUsage: {total_gb:.2f} GB")
-                    return total_size
-
-            logger.warning(f"[OVF-EXPORT] Impossible d'obtenir la taille réelle via layoutEx ou storage")
-            return 0
-
-        except Exception as e:
-            logger.error(f"[OVF-EXPORT] Erreur lors de la récupération de la taille: {e}")
-            logger.exception(e)
-            return 0
 
     def export_ovf(self):
         """
@@ -133,23 +55,13 @@ class OVFExportLeaseService:
             logger.info(f"[OVF-EXPORT] Using HttpNfcLease API (handles thin-provisioned disks)")
             logger.info(f"[OVF-EXPORT] ========================================")
 
-            # STEP 0: Récupérer la taille RÉELLE des fichiers de la VM AVANT tout
-            logger.info(f"[OVF-EXPORT] Step 0/5: Calculating real VM files size from datastore...")
-            total_bytes = self._get_vm_files_total_size()
-
             self.export_job.status = 'running'
             self.export_job.started_at = timezone.now()
             self.export_job.progress_percentage = 5
             self.export_job.downloaded_bytes = 0
-            self.export_job.total_bytes = total_bytes  # Stocker la taille RÉELLE dès le début
+            self.export_job.total_bytes = 0
             self.export_job.download_speed_mbps = 0
             self.export_job.save()
-
-            if total_bytes > 0:
-                total_gb = total_bytes / (1024 * 1024 * 1024)
-                logger.info(f"[OVF-EXPORT] ✓ Taille totale confirmée: {total_gb:.2f} GB ({total_bytes} bytes)")
-            else:
-                logger.warning(f"[OVF-EXPORT] ⚠ Taille totale inconnue, sera ajustée dynamiquement pendant le téléchargement")
 
             # Create export directory
             export_dir = self.export_job.export_full_path
@@ -157,7 +69,7 @@ class OVFExportLeaseService:
             logger.info(f"[OVF-EXPORT] Export directory: {export_dir}")
 
             # Step 1: Create export lease
-            logger.info(f"[OVF-EXPORT] Step 1/4: Creating export lease...")
+            logger.info(f"[OVF-EXPORT] Step 1/5: Creating export lease...")
             lease = self.vm.ExportVm()
 
             # Wait for lease to be ready
@@ -171,21 +83,20 @@ class OVFExportLeaseService:
                 raise Exception(error_msg)
 
             logger.info(f"[OVF-EXPORT] Lease ready")
-            self.export_job.progress_percentage = 10
+            self.export_job.progress_percentage = 8
             self.export_job.save()
 
-            # Step 2: Download files (avec taille totale déjà connue)
-            logger.info(f"[OVF-EXPORT] Step 2/5: Downloading VM files...")
+            # Step 2: Pré-scan pour obtenir la taille EXACTE des fichiers qui seront exportés
+            logger.info(f"[OVF-EXPORT] Step 2/5: Pre-scanning export files sizes...")
             device_urls = lease.info.deviceUrl
-            logger.info(f"[OVF-EXPORT] Found {len(device_urls)} files to download")
+            logger.info(f"[OVF-EXPORT] Found {len(device_urls)} files to export")
 
-            downloaded_files = []
-            downloaded_bytes = 0
+            total_bytes = 0
+            file_info_list = []
 
             for i, device_url in enumerate(device_urls):
                 url = device_url.url.replace('*', self.esxi_host)
                 target_id = device_url.targetId if hasattr(device_url, 'targetId') else f"file-{i}"
-                file_size = getattr(device_url, 'fileSize', 0) or 0
 
                 # Déterminer le nom du fichier
                 filename = None
@@ -198,6 +109,74 @@ class OVFExportLeaseService:
                         filename = url.split('/')[-1]
                     else:
                         filename = target_id or f"file-{i}"
+
+                # Requête HEAD pour obtenir la vraie taille (sans télécharger)
+                try:
+                    head_response = requests.head(
+                        url,
+                        auth=(self.esxi_user, self.esxi_pass),
+                        verify=False,
+                        timeout=10
+                    )
+
+                    if head_response.status_code == 200:
+                        real_size = int(head_response.headers.get('Content-Length', 0))
+                        if real_size > 0:
+                            total_bytes += real_size
+                            size_mb = real_size / (1024 * 1024)
+                            logger.info(f"[OVF-EXPORT] Pre-scan: {filename} = {size_mb:.2f} MB")
+
+                            file_info_list.append({
+                                'url': url,
+                                'filename': filename,
+                                'size': real_size,
+                                'index': i
+                            })
+                        else:
+                            logger.warning(f"[OVF-EXPORT] Pre-scan: {filename} = taille inconnue (Content-Length=0)")
+                            file_info_list.append({
+                                'url': url,
+                                'filename': filename,
+                                'size': 0,
+                                'index': i
+                            })
+                    else:
+                        # Fichier optionnel qui n'existe pas (ex: NVRAM)
+                        logger.warning(f"[OVF-EXPORT] Pre-scan: {filename} non disponible (HTTP {head_response.status_code})")
+
+                except Exception as e:
+                    logger.warning(f"[OVF-EXPORT] Pre-scan HEAD failed for {filename}: {e}")
+                    # Ajouter quand même à la liste avec taille 0
+                    file_info_list.append({
+                        'url': url,
+                        'filename': filename,
+                        'size': 0,
+                        'index': i
+                    })
+
+            # Stocker la taille totale EXACTE des fichiers qui seront exportés
+            self.export_job.total_bytes = total_bytes
+            self.export_job.save()
+
+            total_gb = total_bytes / (1024 * 1024 * 1024)
+            logger.info(f"[OVF-EXPORT] ========================================")
+            logger.info(f"[OVF-EXPORT] Taille totale EXACTE à exporter: {total_gb:.2f} GB ({total_bytes / (1024*1024):.2f} MB)")
+            logger.info(f"[OVF-EXPORT] Nombre de fichiers: {len(file_info_list)}")
+            logger.info(f"[OVF-EXPORT] ========================================")
+
+            self.export_job.progress_percentage = 10
+            self.export_job.save()
+
+            # Step 3: Download files (avec la taille exacte connue depuis le pré-scan)
+            logger.info(f"[OVF-EXPORT] Step 3/5: Downloading VM files...")
+            downloaded_files = []
+            downloaded_bytes = 0
+
+            for file_info in file_info_list:
+                url = file_info['url']
+                filename = file_info['filename']
+                file_size = file_info['size']
+                file_index = file_info['index']
 
                 dest_path = os.path.join(export_dir, filename)
 
@@ -213,8 +192,8 @@ class OVFExportLeaseService:
                         logger.info(f"[OVF-EXPORT] Export annulé par l'utilisateur")
                         raise Exception("Export annulé par l'utilisateur")
 
-                    # Télécharger le fichier (total_bytes peut être ajusté dynamiquement)
-                    total_bytes = self._download_file(url, dest_path, file_size, downloaded_bytes, total_bytes, i, len(device_urls))
+                    # Télécharger le fichier (total_bytes est déjà précis depuis le pré-scan)
+                    total_bytes = self._download_file(url, dest_path, file_size, downloaded_bytes, total_bytes, file_index, len(file_info_list))
 
                     # Get actual file size after download (lease fileSize may be 0 or incorrect)
                     actual_size_bytes = os.path.getsize(dest_path)
@@ -260,8 +239,8 @@ class OVFExportLeaseService:
             self.export_job.progress_percentage = 85
             self.export_job.save()
 
-            # Step 3: Generate OVF descriptor (if not already downloaded)
-            logger.info(f"[OVF-EXPORT] Step 3/5: Generating OVF descriptor...")
+            # Step 4: Generate OVF descriptor (if not already downloaded)
+            logger.info(f"[OVF-EXPORT] Step 4/5: Generating OVF descriptor...")
             ovf_files = [f for f in downloaded_files if f['filename'].endswith('.ovf')]
 
             if not ovf_files:
@@ -281,8 +260,8 @@ class OVFExportLeaseService:
             self.export_job.progress_percentage = 92
             self.export_job.save()
 
-            # Step 4: Generate manifest
-            logger.info(f"[OVF-EXPORT] Step 4/5: Generating manifest...")
+            # Step 5: Generate manifest
+            logger.info(f"[OVF-EXPORT] Step 5/5: Generating manifest...")
             self._generate_manifest(export_dir, downloaded_files)
             self.export_job.progress_percentage = 95
             self.export_job.save()
