@@ -86,14 +86,43 @@ class OVFExportLeaseService:
             self.export_job.progress_percentage = 10
             self.export_job.save()
 
-            # Step 2: Download files (taille calculée dynamiquement pendant le téléchargement)
+            # Step 1.5: Estimate total export size using VM size ratio
+            logger.info(f"[OVF-EXPORT] Step 1.5/4: Estimating export size...")
+
+            # Get VM total size from storage usage
+            vm_total_bytes = 0
+            if hasattr(self.vm, 'storage') and self.vm.storage:
+                if hasattr(self.vm.storage, 'perDatastoreUsage') and self.vm.storage.perDatastoreUsage:
+                    for usage in self.vm.storage.perDatastoreUsage:
+                        if hasattr(usage, 'committed'):
+                            vm_total_bytes += usage.committed
+
+            # Apply ratio to estimate OVF export size
+            # Empirically determined: OVF exports are typically ~35% of total VM size
+            # This accounts for thin provisioning, compression, and exclusion of swap/logs
+            OVF_EXPORT_RATIO = 0.35
+            estimated_total_bytes = int(vm_total_bytes * OVF_EXPORT_RATIO)
+
+            # Set estimated total bytes (this will be our baseline for progress)
+            if estimated_total_bytes > 0:
+                self.export_job.total_bytes = estimated_total_bytes
+                self.export_job.save()
+
+                vm_total_gb = vm_total_bytes / (1024**3)
+                estimated_gb = estimated_total_bytes / (1024**3)
+                logger.info(f"[OVF-EXPORT] VM total size: {vm_total_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT] Estimated OVF size: {estimated_gb:.2f} GB (ratio: {OVF_EXPORT_RATIO:.0%})")
+            else:
+                logger.warning(f"[OVF-EXPORT] Could not estimate VM size, will use progressive calculation")
+
+            # Step 2: Download files
             logger.info(f"[OVF-EXPORT] Step 2/4: Downloading VM files...")
             device_urls = lease.info.deviceUrl
             logger.info(f"[OVF-EXPORT] Found {len(device_urls)} files to download")
 
             downloaded_files = []
             downloaded_bytes = 0
-            total_bytes = 0  # Sera calculé progressivement
+            total_bytes = estimated_total_bytes  # Start with estimation
 
             for i, device_url in enumerate(device_urls):
                 url = device_url.url.replace('*', self.esxi_host)
@@ -200,6 +229,7 @@ class OVFExportLeaseService:
 
             # Calculate total size
             total_size_mb = sum(f['size_mb'] for f in downloaded_files)
+            actual_total_bytes = int(total_size_mb * 1024 * 1024)
             self.export_job.export_size_mb = total_size_mb
             self.export_job.progress_percentage = 100
             self.export_job.status = 'completed'
@@ -211,6 +241,27 @@ class OVFExportLeaseService:
             logger.info(f"[OVF-EXPORT] Total size: {total_size_mb:.2f} MB")
             logger.info(f"[OVF-EXPORT] Files exported: {len(downloaded_files)}")
             logger.info(f"[OVF-EXPORT] Location: {export_dir}")
+
+            # Validation: Compare estimated vs actual size
+            if estimated_total_bytes > 0:
+                actual_gb = actual_total_bytes / (1024**3)
+                estimated_gb = estimated_total_bytes / (1024**3)
+                accuracy_percentage = (actual_total_bytes / estimated_total_bytes) * 100
+                difference_gb = (actual_total_bytes - estimated_total_bytes) / (1024**3)
+
+                logger.info(f"[OVF-EXPORT] ----------------------------------------")
+                logger.info(f"[OVF-EXPORT] SIZE ESTIMATION VALIDATION:")
+                logger.info(f"[OVF-EXPORT]   Estimated: {estimated_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT]   Actual:    {actual_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT]   Accuracy:  {accuracy_percentage:.1f}%")
+                logger.info(f"[OVF-EXPORT]   Difference: {difference_gb:+.2f} GB")
+
+                # Log if estimation was significantly off (>20% difference)
+                if abs(accuracy_percentage - 100) > 20:
+                    logger.warning(f"[OVF-EXPORT] Estimation was off by more than 20% - consider adjusting OVF_EXPORT_RATIO")
+                else:
+                    logger.info(f"[OVF-EXPORT] Estimation within acceptable range")
+
             logger.info(f"[OVF-EXPORT] ========================================")
 
             return True
