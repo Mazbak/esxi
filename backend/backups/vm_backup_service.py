@@ -146,14 +146,9 @@ class VMBackupService:
                 self.backup_job.calculate_duration()
                 self.backup_job.save()
 
-                # Supprimer le dossier de backup incomplet en cas d'échec
-                if self.backup_job.backup_full_path and os.path.exists(self.backup_job.backup_full_path):
-                    try:
-                        import shutil
-                        shutil.rmtree(self.backup_job.backup_full_path)
-                        logger.info(f"[VM-BACKUP] Dossier de backup incomplet supprimé: {self.backup_job.backup_full_path}")
-                    except Exception as del_err:
-                        logger.warning(f"[VM-BACKUP] Erreur suppression dossier backup: {del_err}")
+                # Note: On GARDE le dossier de backup en cas d'échec pour investigation/debug
+                # L'utilisateur peut manuellement le supprimer s'il le souhaite
+                logger.warning(f"[VM-BACKUP] Dossier de backup incomplet conservé pour investigation: {self.backup_job.backup_full_path}")
 
             # Nettoyer le snapshot en cas d'erreur ou d'annulation
             if self.snapshot:
