@@ -267,6 +267,9 @@ class OVFExportLeaseService:
         if response.status_code != 200:
             response.raise_for_status()
 
+        # DEBUG: Logger tous les headers disponibles
+        logger.info(f"[OVF-EXPORT] Response headers: {dict(response.headers)}")
+
         # Obtenir la taille réelle depuis Content-Length HTTP
         file_size = int(response.headers.get('Content-Length', 0))
 
