@@ -42,7 +42,10 @@ class OVFExportLeaseService:
     def _get_vm_files_total_size(self):
         """
         Récupère la taille RÉELLE de tous les fichiers de la VM depuis le datastore
-        AVANT de commencer l'export. Ceci est la méthode la plus fiable.
+        AVANT de commencer l'export.
+
+        Pour les disques thin-provisioned, utilise disk.snapshot[0].diskUsage qui donne
+        la taille RÉELLEMENT utilisée, pas la capacité allouée.
 
         Returns:
             int: Taille totale en octets
@@ -50,51 +53,69 @@ class OVFExportLeaseService:
         try:
             total_size = 0
 
-            # Récupérer les informations de layout des fichiers de la VM
+            # MÉTHODE 1 : Utiliser les snapshots des disques pour obtenir la taille UTILISÉE
             if hasattr(self.vm, 'layoutEx') and self.vm.layoutEx:
                 layout = self.vm.layoutEx
 
-                # Parcourir tous les fichiers de la VM (vmdk, vmx, nvram, etc.)
+                # Parcourir les disques via layoutEx.disk (plus précis que file)
+                if hasattr(layout, 'disk') and layout.disk:
+                    for disk in layout.disk:
+                        # Pour les disques thin-provisioned, snapshot[0].diskUsage donne la taille utilisée
+                        if hasattr(disk, 'diskFile') and disk.diskFile:
+                            for disk_file in disk.diskFile:
+                                # Chaque fichier de disque a une taille
+                                if hasattr(disk_file, 'size'):
+                                    file_size = disk_file.size
+                                    total_size += file_size
+
+                                    size_mb = file_size / (1024 * 1024)
+                                    logger.info(f"[OVF-EXPORT] Disk file: {size_mb:.2f} MB")
+
+                    if total_size > 0:
+                        total_gb = total_size / (1024 * 1024 * 1024)
+                        logger.info(f"[OVF-EXPORT] Taille totale depuis layoutEx.disk: {total_gb:.2f} GB")
+                        return total_size
+
+                # FALLBACK 1: Utiliser layoutEx.file
                 if hasattr(layout, 'file') and layout.file:
                     for file_info in layout.file:
                         file_size = file_info.size if hasattr(file_info, 'size') else 0
                         file_name = file_info.name if hasattr(file_info, 'name') else 'unknown'
 
-                        total_size += file_size
+                        # Seulement compter les fichiers VMDK (pas les logs, etc.)
+                        if '.vmdk' in file_name.lower() or '.vmx' in file_name.lower() or '.nvram' in file_name.lower():
+                            total_size += file_size
+                            size_mb = file_size / (1024 * 1024)
+                            logger.info(f"[OVF-EXPORT] VM File: {file_name} = {size_mb:.2f} MB")
 
-                        size_mb = file_size / (1024 * 1024)
-                        logger.info(f"[OVF-EXPORT] VM File: {file_name} = {size_mb:.2f} MB")
+                    if total_size > 0:
+                        total_gb = total_size / (1024 * 1024 * 1024)
+                        logger.info(f"[OVF-EXPORT] Taille totale depuis layoutEx.file: {total_gb:.2f} GB")
+                        return total_size
 
-                    total_gb = total_size / (1024 * 1024 * 1024)
-                    logger.info(f"[OVF-EXPORT] Taille totale RÉELLE de la VM: {total_gb:.2f} GB ({total_size / (1024*1024):.2f} MB)")
-                    return total_size
-                else:
-                    logger.warning(f"[OVF-EXPORT] VM layoutEx.file non disponible")
-            else:
-                logger.warning(f"[OVF-EXPORT] VM layoutEx non disponible")
+            # MÉTHODE 2 : Utiliser vm.storage.perDatastoreUsage (plus fiable)
+            if total_size == 0 and hasattr(self.vm, 'storage') and self.vm.storage:
+                if hasattr(self.vm.storage, 'perDatastoreUsage') and self.vm.storage.perDatastoreUsage:
+                    for usage in self.vm.storage.perDatastoreUsage:
+                        # committed = espace réellement utilisé sur le disque
+                        if hasattr(usage, 'committed'):
+                            committed = usage.committed
+                            total_size += committed
 
-            # Fallback: Utiliser la taille des disques configurés
-            if total_size == 0 and hasattr(self.vm, 'config') and self.vm.config:
-                if hasattr(self.vm.config, 'hardware') and self.vm.config.hardware:
-                    for device in self.vm.config.hardware.device:
-                        if hasattr(device, 'capacityInBytes'):
-                            # Disque virtuel
-                            disk_size = device.capacityInBytes
-                            total_size += disk_size
-
-                            size_gb = disk_size / (1024 * 1024 * 1024)
-                            logger.info(f"[OVF-EXPORT] Disk capacity: {size_gb:.2f} GB")
+                            size_gb = committed / (1024 * 1024 * 1024)
+                            logger.info(f"[OVF-EXPORT] Datastore committed: {size_gb:.2f} GB")
 
                 if total_size > 0:
                     total_gb = total_size / (1024 * 1024 * 1024)
-                    logger.info(f"[OVF-EXPORT] Taille estimée depuis config: {total_gb:.2f} GB")
+                    logger.info(f"[OVF-EXPORT] Taille totale depuis storage.perDatastoreUsage: {total_gb:.2f} GB")
                     return total_size
 
-            logger.warning(f"[OVF-EXPORT] Impossible d'obtenir la taille réelle, fallback à 0")
+            logger.warning(f"[OVF-EXPORT] Impossible d'obtenir la taille réelle via layoutEx ou storage")
             return 0
 
         except Exception as e:
             logger.error(f"[OVF-EXPORT] Erreur lors de la récupération de la taille: {e}")
+            logger.exception(e)
             return 0
 
     def export_ovf(self):
@@ -126,9 +147,9 @@ class OVFExportLeaseService:
 
             if total_bytes > 0:
                 total_gb = total_bytes / (1024 * 1024 * 1024)
-                logger.info(f"[OVF-EXPORT] ✓ Taille totale confirmée: {total_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT] ✓ Taille totale confirmée: {total_gb:.2f} GB ({total_bytes} bytes)")
             else:
-                logger.warning(f"[OVF-EXPORT] ⚠ Taille totale inconnue, progression approximative")
+                logger.warning(f"[OVF-EXPORT] ⚠ Taille totale inconnue, sera ajustée dynamiquement pendant le téléchargement")
 
             # Create export directory
             export_dir = self.export_job.export_full_path
@@ -192,12 +213,21 @@ class OVFExportLeaseService:
                         logger.info(f"[OVF-EXPORT] Export annulé par l'utilisateur")
                         raise Exception("Export annulé par l'utilisateur")
 
-                    # Télécharger le fichier (total_bytes est déjà correct depuis layoutEx)
-                    self._download_file(url, dest_path, file_size, downloaded_bytes, total_bytes, i, len(device_urls))
+                    # Télécharger le fichier (total_bytes peut être ajusté dynamiquement)
+                    total_bytes = self._download_file(url, dest_path, file_size, downloaded_bytes, total_bytes, i, len(device_urls))
 
                     # Get actual file size after download (lease fileSize may be 0 or incorrect)
                     actual_size_bytes = os.path.getsize(dest_path)
                     actual_size_mb = actual_size_bytes / (1024 * 1024)
+
+                    # Si le fichier téléchargé est plus gros que prévu, ajuster total_bytes
+                    expected_remaining = total_bytes - downloaded_bytes
+                    if actual_size_bytes > expected_remaining:
+                        # Le fichier est plus gros que prévu, ajuster le total
+                        size_diff = actual_size_bytes - expected_remaining
+                        total_bytes += size_diff
+                        self.export_job.total_bytes = total_bytes
+                        logger.warning(f"[OVF-EXPORT] Ajustement total_bytes: +{size_diff / (1024*1024):.2f} MB -> {total_bytes / (1024*1024):.2f} MB total")
 
                     # Incrémenter avec la VRAIE taille téléchargée, pas celle du lease
                     downloaded_bytes += actual_size_bytes
@@ -318,7 +348,10 @@ class OVFExportLeaseService:
     def _download_file(self, url, dest_path, file_size, downloaded_so_far, total_size, file_index, total_files):
         """
         Download a file from the lease URL with progress tracking
-        file_size et total_size sont déjà corrects grâce au pré-scan HEAD
+        Ajuste dynamiquement total_size si Content-Length diffère
+
+        Returns:
+            int: total_size ajusté (peut être différent de l'input)
         """
         import time
 
@@ -333,6 +366,25 @@ class OVFExportLeaseService:
         # Check response status - let caller handle errors
         if response.status_code != 200:
             response.raise_for_status()
+
+        # Obtenir la taille réelle depuis Content-Length HTTP
+        real_file_size = int(response.headers.get('Content-Length', 0))
+
+        # Ajuster total_size si la taille réelle diffère
+        if real_file_size > 0 and real_file_size != file_size:
+            size_diff = real_file_size - file_size
+            old_total = total_size
+            total_size = max(0, total_size + size_diff)
+
+            # Mettre à jour immédiatement dans la BDD
+            self.export_job.total_bytes = total_size
+            self.export_job.save()
+
+            logger.info(f"[OVF-EXPORT] Ajustement: fichier {real_file_size / (1024*1024):.2f} MB (prévu {file_size / (1024*1024):.2f} MB)")
+            logger.info(f"[OVF-EXPORT] Total ajusté: {old_total / (1024*1024):.2f} MB -> {total_size / (1024*1024):.2f} MB")
+
+        # Utiliser la vraie taille pour ce fichier
+        file_size = real_file_size if real_file_size > 0 else file_size
 
         downloaded = 0
         last_logged_mb = 0
@@ -409,6 +461,9 @@ class OVFExportLeaseService:
                             last_progress = global_progress
 
                         last_logged_mb = int(downloaded_mb)
+
+        # Retourner le total_size ajusté
+        return total_size
 
     def _generate_ovf_descriptor(self, downloaded_files):
         """
