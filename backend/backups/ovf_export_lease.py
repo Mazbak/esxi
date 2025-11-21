@@ -57,7 +57,7 @@ class OVFExportLeaseService:
 
             self.export_job.status = 'running'
             self.export_job.started_at = timezone.now()
-            self.export_job.progress_percentage = 5
+            self.export_job.progress_percentage = 1
             self.export_job.downloaded_bytes = 0
             self.export_job.total_bytes = 0
             self.export_job.download_speed_mbps = 0
@@ -83,17 +83,46 @@ class OVFExportLeaseService:
                 raise Exception(error_msg)
 
             logger.info(f"[OVF-EXPORT] Lease ready")
-            self.export_job.progress_percentage = 10
+            self.export_job.progress_percentage = 1
             self.export_job.save()
 
-            # Step 2: Download files (taille calculée dynamiquement pendant le téléchargement)
+            # Step 1.5: Estimate total export size using VM size ratio
+            logger.info(f"[OVF-EXPORT] Step 1.5/4: Estimating export size...")
+
+            # Get VM total size from storage usage
+            vm_total_bytes = 0
+            if hasattr(self.vm, 'storage') and self.vm.storage:
+                if hasattr(self.vm.storage, 'perDatastoreUsage') and self.vm.storage.perDatastoreUsage:
+                    for usage in self.vm.storage.perDatastoreUsage:
+                        if hasattr(usage, 'committed'):
+                            vm_total_bytes += usage.committed
+
+            # Apply ratio to estimate OVF export size
+            # Empirically determined: OVF exports are typically ~35% of total VM size
+            # This accounts for thin provisioning, compression, and exclusion of swap/logs
+            OVF_EXPORT_RATIO = 0.35
+            estimated_total_bytes = int(vm_total_bytes * OVF_EXPORT_RATIO)
+
+            # Set estimated total bytes (this will be our baseline for progress)
+            if estimated_total_bytes > 0:
+                self.export_job.total_bytes = estimated_total_bytes
+                self.export_job.save()
+
+                vm_total_gb = vm_total_bytes / (1024**3)
+                estimated_gb = estimated_total_bytes / (1024**3)
+                logger.info(f"[OVF-EXPORT] VM total size: {vm_total_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT] Estimated OVF size: {estimated_gb:.2f} GB (ratio: {OVF_EXPORT_RATIO:.0%})")
+            else:
+                logger.warning(f"[OVF-EXPORT] Could not estimate VM size, will use progressive calculation")
+
+            # Step 2: Download files
             logger.info(f"[OVF-EXPORT] Step 2/4: Downloading VM files...")
             device_urls = lease.info.deviceUrl
             logger.info(f"[OVF-EXPORT] Found {len(device_urls)} files to download")
 
             downloaded_files = []
             downloaded_bytes = 0
-            total_bytes = 0  # Sera calculé progressivement
+            total_bytes = estimated_total_bytes  # Start with estimation
 
             for i, device_url in enumerate(device_urls):
                 url = device_url.url.replace('*', self.esxi_host)
@@ -156,8 +185,8 @@ class OVFExportLeaseService:
                     else:
                         raise
 
-            # Update progress to 85% (téléchargement terminé)
-            self.export_job.progress_percentage = 85
+            # Update progress to 90% (téléchargement terminé)
+            self.export_job.progress_percentage = 90
             self.export_job.save()
 
             # Step 3: Generate OVF descriptor (if not already downloaded)
@@ -178,13 +207,13 @@ class OVFExportLeaseService:
                     'path': ovf_file
                 })
 
-            self.export_job.progress_percentage = 92
+            self.export_job.progress_percentage = 95
             self.export_job.save()
 
             # Step 4: Generate manifest
             logger.info(f"[OVF-EXPORT] Step 4/4: Generating manifest...")
             self._generate_manifest(export_dir, downloaded_files)
-            self.export_job.progress_percentage = 95
+            self.export_job.progress_percentage = 98
             self.export_job.save()
 
             # Complete the lease
@@ -200,6 +229,7 @@ class OVFExportLeaseService:
 
             # Calculate total size
             total_size_mb = sum(f['size_mb'] for f in downloaded_files)
+            actual_total_bytes = int(total_size_mb * 1024 * 1024)
             self.export_job.export_size_mb = total_size_mb
             self.export_job.progress_percentage = 100
             self.export_job.status = 'completed'
@@ -211,6 +241,27 @@ class OVFExportLeaseService:
             logger.info(f"[OVF-EXPORT] Total size: {total_size_mb:.2f} MB")
             logger.info(f"[OVF-EXPORT] Files exported: {len(downloaded_files)}")
             logger.info(f"[OVF-EXPORT] Location: {export_dir}")
+
+            # Validation: Compare estimated vs actual size
+            if estimated_total_bytes > 0:
+                actual_gb = actual_total_bytes / (1024**3)
+                estimated_gb = estimated_total_bytes / (1024**3)
+                accuracy_percentage = (actual_total_bytes / estimated_total_bytes) * 100
+                difference_gb = (actual_total_bytes - estimated_total_bytes) / (1024**3)
+
+                logger.info(f"[OVF-EXPORT] ----------------------------------------")
+                logger.info(f"[OVF-EXPORT] SIZE ESTIMATION VALIDATION:")
+                logger.info(f"[OVF-EXPORT]   Estimated: {estimated_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT]   Actual:    {actual_gb:.2f} GB")
+                logger.info(f"[OVF-EXPORT]   Accuracy:  {accuracy_percentage:.1f}%")
+                logger.info(f"[OVF-EXPORT]   Difference: {difference_gb:+.2f} GB")
+
+                # Log if estimation was significantly off (>20% difference)
+                if abs(accuracy_percentage - 100) > 20:
+                    logger.warning(f"[OVF-EXPORT] Estimation was off by more than 20% - consider adjusting OVF_EXPORT_RATIO")
+                else:
+                    logger.info(f"[OVF-EXPORT] Estimation within acceptable range")
+
             logger.info(f"[OVF-EXPORT] ========================================")
 
             return True
@@ -328,16 +379,16 @@ class OVFExportLeaseService:
                             # 100% = total_size octets, x% = global_downloaded octets
                             download_percentage = (global_downloaded / total_size) * 100
 
-                            # Progression: 10% (setup) + 75% (download) + 15% (finalization)
-                            # Download représente 10-85% de la progression totale (75%)
-                            global_progress = 10 + int((download_percentage / 100) * 75)
-                            global_progress = min(global_progress, 85)
+                            # Progression: 1% (setup) + 89% (download) + 10% (finalization)
+                            # Download représente 1-90% de la progression totale (89%)
+                            global_progress = 1 + int((download_percentage / 100) * 89)
+                            global_progress = min(global_progress, 90)
 
                             total_mb = total_size / (1024 * 1024)
                             logger.info(f"[OVF-EXPORT] Téléchargé: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({download_percentage:.1f}%) - Progression: {global_progress}%")
                         else:
                             # CAS 2: Progression basée sur le nombre de fichiers si taille inconnue
-                            # Chaque fichier représente une part égale de 10% à 85% (75% total)
+                            # Chaque fichier représente une part égale de 1% à 90% (89% total)
                             if total_files > 0:
                                 # Progression du fichier actuel (0-100%)
                                 if file_size > 0:
@@ -345,11 +396,11 @@ class OVFExportLeaseService:
                                 else:
                                     file_progress = 100 if downloaded > 0 else 0
 
-                                # Progression globale: 10% + (fichiers complétés + progression fichier actuel) / total fichiers * 75%
+                                # Progression globale: 1% + (fichiers complétés + progression fichier actuel) / total fichiers * 89%
                                 files_completed = file_index
                                 files_with_current = files_completed + (file_progress / 100)
-                                global_progress = 10 + int((files_with_current / total_files) * 75)
-                                global_progress = min(global_progress, 85)
+                                global_progress = 1 + int((files_with_current / total_files) * 89)
+                                global_progress = min(global_progress, 90)
 
                                 logger.info(f"[OVF-EXPORT] Fichier {file_index + 1}/{total_files}: {downloaded_mb:.1f} MB ({file_progress:.1f}%) - Progression: {global_progress}%")
                             else:
