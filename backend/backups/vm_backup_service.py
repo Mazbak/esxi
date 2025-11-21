@@ -164,16 +164,22 @@ class VMBackupService:
                     # Parent file hint (snapshots)
                     if line.startswith('parentFileNameHint'):
                         # Format: parentFileNameHint="SQL SERVER-000006.vmdk"
-                        parent = line.split('=')[1].strip().strip('"')
-                        info['parent'] = parent
-                        logger.info(f"[VM-BACKUP] Parent VMDK trouvé: {parent}")
+                        # Extraire le contenu entre guillemets
+                        import re
+                        match = re.search(r'"([^"]+)"', line)
+                        if match:
+                            parent = match.group(1)
+                            info['parent'] = parent
+                            logger.info(f"[VM-BACKUP] Parent VMDK trouvé: {parent}")
 
                     # Extent file (fichier de données)
                     elif line.startswith('RW') or line.startswith('RDONLY'):
                         # Format: RW 16777216 VMFSSPARSE "SQL SERVER-000007-delta.vmdk"
-                        parts = line.split()
-                        if len(parts) >= 4:
-                            extent = parts[3].strip('"')
+                        # Trouver le texte entre guillemets
+                        import re
+                        match = re.search(r'"([^"]+)"', line)
+                        if match:
+                            extent = match.group(1)
                             info['extent_file'] = extent
                             logger.info(f"[VM-BACKUP] Extent file trouvé: {extent}")
 
