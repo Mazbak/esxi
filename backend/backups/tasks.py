@@ -347,7 +347,7 @@ def execute_vm_backup(backup_job_id):
     """
     from backups.models import VMBackupJob
     from backups.vm_backup_service import execute_vm_backup as run_backup
-    from esxi.vmware_service import VMwareConnectionManager
+    from esxi.vmware_service import VMwareService
 
     logger.info(f"[CELERY-VM-BACKUP] === DÉBUT BACKUP {backup_job_id} ===")
 
