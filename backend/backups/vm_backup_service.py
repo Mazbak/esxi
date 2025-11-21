@@ -42,6 +42,13 @@ class VMBackupService:
         self.esxi_user = esxi_server.username
         self.esxi_pass = esxi_server.password
 
+    def check_cancelled(self):
+        """Vérifie si le backup a été annulé par l'utilisateur"""
+        self.backup_job.refresh_from_db(fields=['status'])
+        if self.backup_job.status == 'cancelled':
+            logger.info(f"[VM-BACKUP] Backup annulé par l'utilisateur")
+            raise Exception("Backup annulé par l'utilisateur")
+
     def execute_backup(self):
         """
         Exécute le backup complet
@@ -60,12 +67,14 @@ class VMBackupService:
             self.backup_job.save()
 
             # 1. Créer snapshot (1% -> 5%)
+            self.check_cancelled()
             logger.info(f"[VM-BACKUP] Création snapshot...")
             self.create_snapshot()
             self.backup_job.progress_percentage = 5
             self.backup_job.save()
 
             # 2. Copier les VMDKs (5% -> 90%)
+            self.check_cancelled()
             logger.info(f"[VM-BACKUP] Copie des VMDKs...")
             vmdk_files = self.copy_vmdks()
             self.backup_job.vmdk_files = vmdk_files
@@ -73,18 +82,21 @@ class VMBackupService:
             self.backup_job.save()
 
             # 3. Télécharger fichiers config (.vmx, .nvram, .vmsd, .vmsn, .log) (90% -> 95%)
+            self.check_cancelled()
             logger.info(f"[VM-BACKUP] Téléchargement fichiers configuration VM...")
             config_files = self.download_vm_files()
             self.backup_job.progress_percentage = 95
             self.backup_job.save()
 
             # 4. Sauvegarder métadonnées JSON (95% -> 98%)
+            self.check_cancelled()
             logger.info(f"[VM-BACKUP] Sauvegarde métadonnées...")
             self.save_vm_configuration()
             self.backup_job.progress_percentage = 98
             self.backup_job.save()
 
             # 5. Supprimer le snapshot (98% -> 99%)
+            self.check_cancelled()
             logger.info(f"[VM-BACKUP] Suppression snapshot...")
             self.remove_snapshot()
             self.backup_job.progress_percentage = 99
@@ -103,19 +115,38 @@ class VMBackupService:
             return True
 
         except Exception as e:
-            logger.error(f"[VM-BACKUP] Erreur backup: {e}", exc_info=True)
-            self.backup_job.status = 'failed'
-            self.backup_job.error_message = str(e)
-            self.backup_job.save()
+            # Vérifier si c'est une annulation utilisateur
+            error_msg = str(e)
+            is_cancelled = "annulé par l'utilisateur" in error_msg.lower() or "cancelled" in error_msg.lower()
 
-            # Nettoyer le snapshot en cas d'erreur
+            if is_cancelled:
+                logger.info(f"[VM-BACKUP] Backup annulé: {error_msg}")
+                # Garder le status 'cancelled' (déjà défini par l'API)
+                self.backup_job.refresh_from_db(fields=['status'])
+                if self.backup_job.status != 'cancelled':
+                    self.backup_job.status = 'cancelled'
+                self.backup_job.error_message = error_msg
+                self.backup_job.completed_at = timezone.now()
+                self.backup_job.calculate_duration()
+                self.backup_job.save()
+            else:
+                logger.error(f"[VM-BACKUP] Erreur backup: {e}", exc_info=True)
+                self.backup_job.status = 'failed'
+                self.backup_job.error_message = error_msg
+                self.backup_job.completed_at = timezone.now()
+                self.backup_job.calculate_duration()
+                self.backup_job.save()
+
+            # Nettoyer le snapshot en cas d'erreur ou d'annulation
             if self.snapshot:
                 try:
+                    logger.info(f"[VM-BACKUP] Nettoyage du snapshot...")
                     self.remove_snapshot()
-                except:
-                    pass
+                except Exception as cleanup_err:
+                    logger.warning(f"[VM-BACKUP] Erreur nettoyage snapshot: {cleanup_err}")
 
-            raise
+            if not is_cancelled:
+                raise
 
     def create_snapshot(self):
         """Crée un snapshot de la VM"""
@@ -273,6 +304,9 @@ class VMBackupService:
 
         downloaded_files_set.add(vmdk_filename)
         total_size = 0
+
+        # Vérifier si le backup a été annulé
+        self.check_cancelled()
 
         # URL du descriptor
         vmdk_url = f"https://{self.esxi_host}/folder/{vmdk_filename}?dcPath={dc_name}&dsName={datastore_name}"
