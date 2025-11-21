@@ -147,12 +147,15 @@ class OVFExportLeaseService:
                         logger.info(f"[OVF-EXPORT] Export annulé par l'utilisateur")
                         raise Exception("Export annulé par l'utilisateur")
 
-                    self._download_file(url, dest_path, file_size, downloaded_bytes, total_bytes, i, len(device_urls))
-                    downloaded_bytes += file_size
+                    # Télécharger le fichier et obtenir le total ajusté
+                    total_bytes = self._download_file(url, dest_path, file_size, downloaded_bytes, total_bytes, i, len(device_urls))
 
                     # Get actual file size after download (lease fileSize may be 0 or incorrect)
                     actual_size_bytes = os.path.getsize(dest_path)
                     actual_size_mb = actual_size_bytes / (1024 * 1024)
+
+                    # Incrémenter avec la VRAIE taille téléchargée, pas celle du lease
+                    downloaded_bytes += actual_size_bytes
 
                     downloaded_files.append({
                         'filename': filename,
@@ -285,6 +288,24 @@ class OVFExportLeaseService:
         if response.status_code != 200:
             response.raise_for_status()
 
+        # Obtenir la VRAIE taille du fichier depuis Content-Length (plus fiable que le lease VMware)
+        real_file_size = int(response.headers.get('Content-Length', 0))
+
+        # Ajuster total_size si la vraie taille est différente du lease
+        if real_file_size > 0 and real_file_size != file_size:
+            size_difference = real_file_size - file_size
+            total_size = max(0, total_size + size_difference)  # Ajuster le total
+
+            # Mettre à jour total_bytes dans le modèle
+            self.export_job.total_bytes = total_size
+            self.export_job.save()
+
+            logger.info(f"[OVF-EXPORT] Vraie taille du fichier: {real_file_size / (1024*1024):.2f} MB (lease: {file_size / (1024*1024):.2f} MB)")
+            logger.info(f"[OVF-EXPORT] Total ajusté: {total_size / (1024*1024):.2f} MB")
+
+        # Utiliser la vraie taille pour le fichier actuel
+        file_size = real_file_size if real_file_size > 0 else file_size
+
         downloaded = 0
         last_logged_mb = 0
         last_progress = self.export_job.progress_percentage
@@ -360,6 +381,9 @@ class OVFExportLeaseService:
                             last_progress = global_progress
 
                         last_logged_mb = int(downloaded_mb)
+
+        # Retourner le total_size ajusté pour les fichiers suivants
+        return total_size
 
     def _generate_ovf_descriptor(self, downloaded_files):
         """
