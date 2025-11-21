@@ -42,6 +42,9 @@ class VMBackupService:
         self.esxi_user = esxi_server.username
         self.esxi_pass = esxi_server.password
 
+        # Temps de démarrage de la phase de téléchargement (pour progression time-based)
+        self.download_phase_start_time = None
+
     def check_cancelled(self):
         """Vérifie si le backup a été annulé par l'utilisateur"""
         self.backup_job.refresh_from_db(fields=['status'])
@@ -469,11 +472,30 @@ class VMBackupService:
                                 global_downloaded_mb = self.backup_job.downloaded_bytes / (1024 * 1024)
                                 logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB / {total_mb:.1f} MB ({download_percentage:.1f}%) - Progression: {global_progress}%")
                             else:
-                                # Si pas de total connu, afficher juste les MB téléchargés et la vitesse
-                                self.backup_job.save()
+                                # Si pas de total connu, estimer la progression basée sur les MB téléchargés
+                                # Heuristique: 0-1GB=5-20%, 1-5GB=20-50%, 5-20GB=50-80%, 20+GB=80-90%
                                 global_downloaded_mb = self.backup_job.downloaded_bytes / (1024 * 1024)
+                                downloaded_gb = global_downloaded_mb / 1024
+
+                                if downloaded_gb < 1:
+                                    # 0-1 GB: progression de 5% à 20%
+                                    global_progress = 5 + int(downloaded_gb * 15)
+                                elif downloaded_gb < 5:
+                                    # 1-5 GB: progression de 20% à 50%
+                                    global_progress = 20 + int((downloaded_gb - 1) * 7.5)
+                                elif downloaded_gb < 20:
+                                    # 5-20 GB: progression de 50% à 80%
+                                    global_progress = 50 + int((downloaded_gb - 5) * 2)
+                                else:
+                                    # 20+ GB: progression de 80% à 90%
+                                    global_progress = 80 + min(10, int((downloaded_gb - 20) * 0.5))
+
+                                global_progress = min(global_progress, 90)  # Toujours cap à 90%
+                                self.backup_job.progress_percentage = global_progress
+                                self.backup_job.save()
+
                                 speed = self.backup_job.download_speed_mbps
-                                logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB ({speed:.1f} MB/s)")
+                                logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB ({speed:.1f} MB/s) - Progression: {global_progress}%")
 
                             last_logged_mb = int(downloaded_mb)
 
@@ -512,6 +534,10 @@ class VMBackupService:
 
             # PHASE 2: Télécharger les VMDKs avec progression en temps réel
             logger.info(f"[VM-BACKUP] Phase 2: Téléchargement des VMDKs...")
+
+            # Démarrer le timer pour la progression time-based
+            import time
+            self.download_phase_start_time = time.time()
 
             # Récupérer les disques de la VM
             for device in self.vm.config.hardware.device:
