@@ -59,32 +59,33 @@ class VMBackupService:
             self.backup_job.download_speed_mbps = 0
             self.backup_job.save()
 
-            # 1. Créer snapshot
+            # 1. Créer snapshot (1% -> 5%)
             logger.info(f"[VM-BACKUP] Création snapshot...")
             self.create_snapshot()
-            self.backup_job.progress_percentage = 10
+            self.backup_job.progress_percentage = 5
             self.backup_job.save()
 
-            # 2. Copier les VMDKs
+            # 2. Copier les VMDKs (5% -> 95%)
             logger.info(f"[VM-BACKUP] Copie des VMDKs...")
             vmdk_files = self.copy_vmdks()
             self.backup_job.vmdk_files = vmdk_files
-            self.backup_job.progress_percentage = 90
-            self.backup_job.save()
-
-            # 3. Sauvegarder la configuration
-            logger.info(f"[VM-BACKUP] Sauvegarde configuration...")
-            self.save_vm_configuration()
             self.backup_job.progress_percentage = 95
             self.backup_job.save()
 
-            # 4. Supprimer le snapshot
-            logger.info(f"[VM-BACKUP] Suppression snapshot...")
-            self.remove_snapshot()
+            # 3. Sauvegarder la configuration (95% -> 98%)
+            logger.info(f"[VM-BACKUP] Sauvegarde configuration...")
+            self.save_vm_configuration()
             self.backup_job.progress_percentage = 98
             self.backup_job.save()
 
-            # Finaliser
+            # 4. Supprimer le snapshot (98% -> 99%)
+            logger.info(f"[VM-BACKUP] Suppression snapshot...")
+            self.remove_snapshot()
+            self.backup_job.progress_percentage = 99
+            self.backup_job.save()
+
+            # Finaliser (99% -> 100%)
+            self.backup_job.progress_percentage = 100
             self.backup_job.status = 'completed'
             self.backup_job.completed_at = timezone.now()
             self.backup_job.calculate_duration()
@@ -403,10 +404,10 @@ class VMBackupService:
                             # Calculer progression si total_bytes connu
                             if self.backup_job.total_bytes > 0:
                                 download_percentage = (self.backup_job.downloaded_bytes / self.backup_job.total_bytes) * 100
-                                # Progression: 10% (snapshot) + 80% (download) + 10% (finalization)
-                                # Download représente 10-90% de la progression totale (80%)
-                                global_progress = 10 + int((download_percentage / 100) * 80)
-                                global_progress = min(global_progress, 90)
+                                # Progression: 1-5% (snapshot) + 5-95% (download) + 95-99% (finalization) + 100% (completed)
+                                # Download représente 5-95% de la progression totale (90%)
+                                global_progress = 5 + int((download_percentage / 100) * 90)
+                                global_progress = min(global_progress, 95)
 
                                 self.backup_job.progress_percentage = global_progress
                                 self.backup_job.save()
