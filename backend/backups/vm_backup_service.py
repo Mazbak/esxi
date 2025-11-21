@@ -270,12 +270,13 @@ class VMBackupService:
         # Télécharger récursivement le parent
         if descriptor_info['parent']:
             parent_filename = descriptor_info['parent']
-            # Le parent peut être relatif, construire le chemin complet
+            # Le parent est toujours un nom relatif dans les descriptors VMware
+            # Il faut TOUJOURS ajouter le dossier parent
             vmdk_dir = os.path.dirname(vmdk_filename)
-            if vmdk_dir and not parent_filename.startswith(vmdk_dir):
+            if vmdk_dir:
                 parent_filename = f"{vmdk_dir}/{parent_filename}"
 
-            logger.info(f"[VM-BACKUP] ↳ Téléchargement parent: {parent_filename}")
+            logger.info(f"[VM-BACKUP] -> Téléchargement parent: {parent_filename}")
             parent_size = self.download_vmdk_chain(
                 parent_filename,
                 datastore_name,
