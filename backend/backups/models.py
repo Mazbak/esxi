@@ -462,6 +462,11 @@ class VMBackupJob(models.Model):
     progress_percentage = models.IntegerField(default=0)
     error_message = models.TextField(blank=True, null=True)
 
+    # Suivi de progression en temps réel (poids téléchargé)
+    downloaded_bytes = models.BigIntegerField(default=0, help_text="Octets téléchargés en temps réel")
+    total_bytes = models.BigIntegerField(default=0, help_text="Taille totale à télécharger en octets")
+    download_speed_mbps = models.FloatField(default=0, help_text="Vitesse de téléchargement en MB/s")
+
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='vm_backups')
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)

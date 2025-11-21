@@ -347,11 +347,13 @@ class VMBackupJobSerializer(serializers.ModelSerializer):
             'snapshot_name', 'snapshot_id', 'base_backup', 'base_backup_id',
             'vm_config_file', 'vmdk_files', 'scheduled_by',
             'status', 'progress_percentage', 'error_message',
+            'downloaded_bytes', 'total_bytes', 'download_speed_mbps',
             'created_by', 'created_at', 'started_at', 'completed_at', 'duration_seconds'
         ]
         read_only_fields = ['id', 'status', 'progress_percentage', 'backup_full_path',
                             'backup_size_mb', 'snapshot_name', 'snapshot_id', 'vm_config_file',
-                            'vmdk_files', 'created_at', 'started_at', 'completed_at', 'duration_seconds']
+                            'vmdk_files', 'downloaded_bytes', 'total_bytes', 'download_speed_mbps',
+                            'created_at', 'started_at', 'completed_at', 'duration_seconds']
 
 
 class VMBackupJobCreateSerializer(serializers.ModelSerializer):
