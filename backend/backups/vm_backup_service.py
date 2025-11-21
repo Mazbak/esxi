@@ -490,42 +490,12 @@ class VMBackupService:
 
             logger.info(f"[VM-BACKUP] Destination: {backup_path}")
 
-            # PHASE 1: Calculer la taille totale réelle (thin provisioning)
-            # en interrogeant le datastore pour obtenir les tailles réelles des fichiers
-            logger.info(f"[VM-BACKUP] Phase 1: Calcul de la taille totale à télécharger...")
-            total_backup_size = 0
-
-            # Récupérer les disques de la VM pour calculer la taille totale
-            for device in self.vm.config.hardware.device:
-                if isinstance(device, vim.vm.device.VirtualDisk):
-                    if hasattr(device.backing, 'fileName'):
-                        vmdk_file = device.backing.fileName
-                        vmdk_filename = vmdk_file.split(']')[1].strip().lstrip('/')
-                        datastore_name = vmdk_file.split(']')[0].strip('[')
-
-                        # Récupérer le datastore
-                        datastore = None
-                        for ds in self.vm.datastore:
-                            if ds.name == datastore_name:
-                                datastore = ds
-                                break
-
-                        if datastore:
-                            dc = self.vm.runtime.host.parent
-                            while not isinstance(dc, vim.Datacenter):
-                                dc = dc.parent
-
-                            # Calculer la taille réelle de la chaîne VMDK (thin provisioning)
-                            chain_size = self.get_vmdk_chain_size(vmdk_filename, datastore, dc.name)
-                            total_backup_size += chain_size
-
-            # Enregistrer la taille totale
-            if total_backup_size > 0:
-                self.backup_job.total_bytes = total_backup_size
-                self.backup_job.save()
-                logger.info(f"[VM-BACKUP] Taille totale à télécharger: {total_backup_size / (1024*1024):.1f} MB ({total_backup_size / (1024*1024*1024):.2f} GB)")
-            else:
-                logger.warning(f"[VM-BACKUP] Impossible de calculer la taille totale, progression sans pourcentage")
+            # Note: Impossible de calculer précisément la taille totale à l'avance car:
+            # - La chaîne de snapshots peut avoir des parents imprévisibles
+            # - Les fichiers delta peuvent avoir des tailles variables
+            # - Il faudrait parser tous les descriptors avant de commencer
+            # On affichera donc la progression en MB téléchargés sans pourcentage total
+            logger.info(f"[VM-BACKUP] Téléchargement des VMDKs (progression en temps réel)")
 
             # PHASE 2: Télécharger les VMDKs avec progression en temps réel
             logger.info(f"[VM-BACKUP] Phase 2: Téléchargement des VMDKs...")
