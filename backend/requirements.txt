@@ -1,0 +1,32 @@
+# Core Django
+Django>=4.2,<5.0
+djangorestframework>=3.14.0
+
+# CORS headers for frontend
+django-cors-headers>=4.0.0
+
+# VMware ESXi API
+pyvmomi>=8.0.0
+
+# HTTP requests for file downloads
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Task scheduling
+APScheduler>=3.10.0
+
+# Celery for async tasks (optional but recommended)
+celery>=5.3.0
+redis>=4.5.0
+
+# Database
+psycopg2-binary>=2.9.0  # For PostgreSQL in production
+
+# Filters for DRF
+django-filter>=23.0
+
+# Environment variables
+python-decouple>=3.8
+
+# Timezone support
+pytz>=2023.3
