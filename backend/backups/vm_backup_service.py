@@ -53,31 +53,35 @@ class VMBackupService:
         try:
             logger.info(f"[VM-BACKUP] Début backup de {self.vm.name}")
             self.backup_job.status = 'running'
+            self.backup_job.progress_percentage = 1
+            self.backup_job.downloaded_bytes = 0
+            self.backup_job.total_bytes = 0
+            self.backup_job.download_speed_mbps = 0
             self.backup_job.save()
 
             # 1. Créer snapshot
             logger.info(f"[VM-BACKUP] Création snapshot...")
             self.create_snapshot()
-            self.backup_job.progress_percentage = 20
+            self.backup_job.progress_percentage = 10
             self.backup_job.save()
 
             # 2. Copier les VMDKs
             logger.info(f"[VM-BACKUP] Copie des VMDKs...")
             vmdk_files = self.copy_vmdks()
             self.backup_job.vmdk_files = vmdk_files
-            self.backup_job.progress_percentage = 70
+            self.backup_job.progress_percentage = 90
             self.backup_job.save()
 
             # 3. Sauvegarder la configuration
             logger.info(f"[VM-BACKUP] Sauvegarde configuration...")
             self.save_vm_configuration()
-            self.backup_job.progress_percentage = 90
+            self.backup_job.progress_percentage = 95
             self.backup_job.save()
 
             # 4. Supprimer le snapshot
             logger.info(f"[VM-BACKUP] Suppression snapshot...")
             self.remove_snapshot()
-            self.backup_job.progress_percentage = 100
+            self.backup_job.progress_percentage = 98
             self.backup_job.save()
 
             # Finaliser
@@ -209,7 +213,11 @@ class VMBackupService:
         # Télécharger le descriptor
         logger.info(f"[VM-BACKUP] Téléchargement descriptor: {vmdk_filename}")
         self.download_vmdk_file(vmdk_url, dest_file)
-        total_size += os.path.getsize(dest_file) if os.path.exists(dest_file) else 0
+        file_size = os.path.getsize(dest_file) if os.path.exists(dest_file) else 0
+        total_size += file_size
+        # Mettre à jour les bytes téléchargés
+        self.backup_job.downloaded_bytes += file_size
+        self.backup_job.save()
 
         # Parser le descriptor pour trouver le parent et l'extent
         descriptor_info = self.parse_vmdk_descriptor(dest_file)
@@ -243,7 +251,11 @@ class VMBackupService:
             logger.info(f"[VM-BACKUP] Téléchargement données: {data_filename}")
             try:
                 self.download_vmdk_file(data_url, data_dest_file)
-                total_size += os.path.getsize(data_dest_file) if os.path.exists(data_dest_file) else 0
+                data_size = os.path.getsize(data_dest_file) if os.path.exists(data_dest_file) else 0
+                total_size += data_size
+                # Mettre à jour les bytes téléchargés
+                self.backup_job.downloaded_bytes += data_size
+                self.backup_job.save()
                 logger.info(f"[VM-BACKUP] Fichier données téléchargé: {data_dest_file}")
             except Exception as e:
                 logger.error(f"[VM-BACKUP] Erreur téléchargement données: {e}")
@@ -271,7 +283,7 @@ class VMBackupService:
 
     def download_vmdk_file(self, vmdk_url, dest_path, chunk_size=8192*1024):
         """
-        Télécharge un fichier VMDK depuis ESXi via HTTP
+        Télécharge un fichier VMDK depuis ESXi via HTTP avec progression en temps réel
 
         Args:
             vmdk_url: URL du fichier VMDK sur ESXi
@@ -281,6 +293,8 @@ class VMBackupService:
         Returns:
             bool: True si succès
         """
+        import time
+
         try:
             logger.info(f"[VM-BACKUP] Téléchargement: {vmdk_url}")
 
@@ -294,9 +308,11 @@ class VMBackupService:
             response.raise_for_status()
 
             # Obtenir la taille totale si disponible
-            total_size = int(response.headers.get('content-length', 0))
+            file_size = int(response.headers.get('content-length', 0))
             downloaded = 0
-            last_logged_progress = 0
+            last_logged_mb = 0
+            start_time = time.time()
+            last_speed_update = start_time
 
             # Télécharger par chunks
             with open(dest_path, 'wb') as f:
@@ -305,20 +321,43 @@ class VMBackupService:
                         f.write(chunk)
                         downloaded += len(chunk)
 
-                        # Update progress every 5%
-                        if total_size > 0:
-                            download_progress = (downloaded / total_size) * 100
-                            if download_progress >= last_logged_progress + 5 or downloaded >= total_size:
-                                # Calculate global progress: 20% (snapshot) + download progress (20-70%)
-                                # Download represents 50% of total progress (from 20% to 70%)
-                                global_progress = 20 + int((download_progress / 100) * 50)
+                        # Mettre à jour tous les 1 MB téléchargés
+                        downloaded_mb = downloaded / (1024 * 1024)
+                        if downloaded_mb >= last_logged_mb + 1 or downloaded >= file_size:
+                            # Vérifier si le backup a été annulé
+                            self.backup_job.refresh_from_db()
+                            if self.backup_job.status == 'cancelled':
+                                logger.info(f"[VM-BACKUP] Backup annulé pendant le téléchargement")
+                                raise Exception("Backup annulé par l'utilisateur")
 
-                                # Update database with real-time progress
+                            # Calculer la vitesse de téléchargement (tous les 2 secondes)
+                            current_time = time.time()
+                            if current_time - last_speed_update >= 2.0:
+                                elapsed_time = current_time - start_time
+                                if elapsed_time > 0:
+                                    speed_mbps = (self.backup_job.downloaded_bytes / (1024 * 1024)) / elapsed_time
+                                    self.backup_job.download_speed_mbps = round(speed_mbps, 2)
+                                last_speed_update = current_time
+
+                            # Mettre à jour les bytes téléchargés (cumulatif)
+                            # Note: downloaded_bytes est mis à jour par download_vmdk_chain
+
+                            # Calculer progression si total_bytes connu
+                            if self.backup_job.total_bytes > 0:
+                                download_percentage = (self.backup_job.downloaded_bytes / self.backup_job.total_bytes) * 100
+                                # Progression: 10% (snapshot) + 80% (download) + 10% (finalization)
+                                # Download représente 10-90% de la progression totale (80%)
+                                global_progress = 10 + int((download_percentage / 100) * 80)
+                                global_progress = min(global_progress, 90)
+
                                 self.backup_job.progress_percentage = global_progress
                                 self.backup_job.save()
 
-                                logger.info(f"[VM-BACKUP] Download: {download_progress:.1f}% ({downloaded / (1024*1024):.1f} MB / {total_size / (1024*1024):.1f} MB) - Global: {global_progress}%")
-                                last_logged_progress = int(download_progress / 5) * 5
+                                total_mb = self.backup_job.total_bytes / (1024 * 1024)
+                                global_downloaded_mb = self.backup_job.downloaded_bytes / (1024 * 1024)
+                                logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB / {total_mb:.1f} MB ({download_percentage:.1f}%) - Progression: {global_progress}%")
+
+                            last_logged_mb = int(downloaded_mb)
 
             logger.info(f"[VM-BACKUP] VMDK téléchargé: {dest_path} ({downloaded / (1024*1024):.1f} MB)")
             return True
@@ -345,6 +384,19 @@ class VMBackupService:
             os.makedirs(backup_path, exist_ok=True)
 
             logger.info(f"[VM-BACKUP] Destination: {backup_path}")
+
+            # Estimer la taille totale à télécharger
+            estimated_total_bytes = 0
+            for device in self.vm.config.hardware.device:
+                if isinstance(device, vim.vm.device.VirtualDisk):
+                    # Utiliser la capacité du disque comme estimation
+                    # Note: peut être plus que la taille réelle (thin provisioning)
+                    estimated_total_bytes += device.capacityInKB * 1024
+
+            if estimated_total_bytes > 0:
+                self.backup_job.total_bytes = estimated_total_bytes
+                self.backup_job.save()
+                logger.info(f"[VM-BACKUP] Taille estimée: {estimated_total_bytes / (1024**3):.2f} GB")
 
             # Récupérer les disques de la VM
             for device in self.vm.config.hardware.device:
