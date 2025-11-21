@@ -290,10 +290,10 @@ onMounted(async () => {
     esxiStore.fetchVirtualMachines()
   ])
 
-  // Auto-refresh pour les jobs en cours
+  // Auto-refresh pour les jobs en cours ou en attente
   refreshInterval = setInterval(async () => {
-    const hasRunningJobs = jobs.value.some(j => j.status === 'running')
-    if (hasRunningJobs) {
+    const hasActiveJobs = jobs.value.some(j => j.status === 'running' || j.status === 'pending')
+    if (hasActiveJobs) {
       // Rafraîchir silencieusement (sans spinner) pour une progression fluide
       try {
         // Utiliser l'API configurée avec authentification
