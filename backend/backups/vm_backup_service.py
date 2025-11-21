@@ -244,8 +244,50 @@ class VMBackupService:
                             # Chemin de destination local
                             dest_file = os.path.join(backup_path, os.path.basename(vmdk_filename))
 
-                            # Télécharger le fichier VMDK via HTTP
+                            # Télécharger le fichier descriptor VMDK via HTTP
+                            logger.info(f"[VM-BACKUP] Téléchargement descriptor VMDK...")
                             self.download_vmdk_file(vmdk_url, dest_file)
+
+                            # Télécharger aussi le fichier de données VMDK
+                            # Les VMDKs VMware sont composés de 2 fichiers:
+                            # - descriptor (.vmdk) : petit fichier texte avec metadata
+                            # - données : gros fichier binaire avec les données réelles
+                            #   * VMDK normal: -flat.vmdk
+                            #   * VMDK snapshot: -delta.vmdk (car c'est un delta du parent)
+                            data_dest_file = None
+                            if vmdk_filename.endswith('.vmdk'):
+                                # Détecter si c'est un snapshot (contient -000001, -000002, etc.)
+                                import re
+                                is_snapshot = re.search(r'-\d{6}\.vmdk$', vmdk_filename)
+
+                                if is_snapshot:
+                                    # Snapshot: chercher le fichier -delta.vmdk
+                                    data_filename = vmdk_filename.replace('.vmdk', '-delta.vmdk')
+                                    logger.info(f"[VM-BACKUP] Snapshot détecté, recherche fichier delta...")
+                                else:
+                                    # VMDK normal: chercher le fichier -flat.vmdk
+                                    data_filename = vmdk_filename.replace('.vmdk', '-flat.vmdk')
+                                    logger.info(f"[VM-BACKUP] VMDK normal, recherche fichier flat...")
+
+                                data_url = f"https://{self.esxi_host}/folder/{data_filename}?dcPath={dc.name}&dsName={datastore_name}"
+                                data_dest_file = os.path.join(backup_path, os.path.basename(data_filename))
+
+                                logger.info(f"[VM-BACKUP] Téléchargement données VMDK: {data_filename}")
+                                try:
+                                    self.download_vmdk_file(data_url, data_dest_file)
+                                    logger.info(f"[VM-BACKUP] Fichier données téléchargé: {data_dest_file}")
+                                except Exception as data_error:
+                                    # Si le fichier de données n'existe pas, logger l'erreur
+                                    logger.error(f"[VM-BACKUP] ERREUR: Impossible de télécharger le fichier de données: {data_error}")
+                                    logger.error(f"[VM-BACKUP] URL tentée: {data_url}")
+                                    raise
+
+                            # Calculer la taille totale (descriptor + fichier de données)
+                            total_size_mb = 0
+                            if os.path.exists(dest_file):
+                                total_size_mb += os.path.getsize(dest_file) / (1024 * 1024)
+                            if data_dest_file and os.path.exists(data_dest_file):
+                                total_size_mb += os.path.getsize(data_dest_file) / (1024 * 1024)
 
                             # Enregistrer les métadonnées
                             vmdk_info = {
@@ -253,11 +295,11 @@ class VMBackupService:
                                 'size_gb': device.capacityInKB / (1024 * 1024),
                                 'dest_path': dest_file,
                                 'datastore': datastore_name,
-                                'size_mb': os.path.getsize(dest_file) / (1024 * 1024) if os.path.exists(dest_file) else 0
+                                'size_mb': total_size_mb
                             }
                             vmdk_files.append(vmdk_info)
 
-                            logger.info(f"[VM-BACKUP] VMDK copié: {vmdk_filename} -> {dest_file}")
+                            logger.info(f"[VM-BACKUP] VMDK copié: {vmdk_filename} ({total_size_mb:.2f} MB)")
 
             return vmdk_files
 
