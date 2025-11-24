@@ -313,11 +313,27 @@ class BackupJobViewSet(viewsets.ModelViewSet):
             job.save()
 
             # Try to use Celery if available, otherwise run in a thread
+            # Vérifier si Celery est disponible en testant la connexion au broker
+            use_celery = False
             try:
-                execute_backup_job.delay(job.id)  # Celery async task
+                from celery import current_app
+                # Essayer de pinger le broker Celery avec un timeout court
+                inspect = current_app.control.inspect(timeout=1.0)
+                active = inspect.active()
+                if active is not None:
+                    use_celery = True
+                    logger.info(f"[BACKUP] Celery disponible, utilisation de Celery")
+                else:
+                    logger.warning(f"[BACKUP] Celery broker non accessible, utilisation du fallback sur threads")
+            except Exception as e:
+                logger.warning(f"[BACKUP] Celery non disponible ({e}), utilisation du fallback sur threads")
+
+            if use_celery:
+                # Lancer avec Celery
+                execute_backup_job.delay(job.id)
                 message = 'Sauvegarde lancée en tâche de fond (Celery)'
-            except Exception as celery_error:
-                # Celery not available, run in a separate thread
+            else:
+                # Fallback : exécuter dans un thread séparé
                 from backups.backup_service import BackupService
                 import threading
 
@@ -1982,14 +1998,28 @@ class OVFExportJobViewSet(viewsets.ModelViewSet):
         export_job.save()
 
         # Lancer l'export en arrière-plan (Celery ou Thread)
+        # Vérifier si Celery est disponible en testant la connexion au broker
+        use_celery = False
         try:
             from backups.tasks import execute_ovf_export
+            from celery import current_app
+            # Essayer de pinger le broker Celery avec un timeout court
+            inspect = current_app.control.inspect(timeout=1.0)
+            active = inspect.active()
+            if active is not None:
+                use_celery = True
+                logger.info(f"[OVF-EXPORT] Celery disponible, utilisation de Celery")
+            else:
+                logger.warning(f"[OVF-EXPORT] Celery broker non accessible, utilisation du fallback sur threads")
+        except Exception as e:
+            logger.warning(f"[OVF-EXPORT] Celery non disponible ({e}), utilisation du fallback sur threads")
+
+        if use_celery:
+            # Lancer avec Celery
             execute_ovf_export.delay(export_job.id)
             logger.info(f"[OVF-EXPORT] Export créé et tâche Celery lancée: {export_job.id}")
-        except Exception as e:
-            # Si Celery n'est pas disponible, exécuter dans un thread séparé
-            logger.warning(f"[OVF-EXPORT] Celery non disponible, exécution en thread: {e}")
-
+        else:
+            # Fallback : exécuter dans un thread séparé
             import threading
 
             def run_export_in_thread():
@@ -2099,14 +2129,28 @@ class VMBackupJobViewSet(viewsets.ModelViewSet):
         backup_job.save()
 
         # Lancer le backup en arrière-plan (Celery ou Thread)
+        # Vérifier si Celery est disponible en testant la connexion au broker
+        use_celery = False
         try:
             from backups.tasks import execute_vm_backup
+            from celery import current_app
+            # Essayer de pinger le broker Celery avec un timeout court
+            inspect = current_app.control.inspect(timeout=1.0)
+            active = inspect.active()
+            if active is not None:
+                use_celery = True
+                logger.info(f"[VM-BACKUP] Celery disponible, utilisation de Celery")
+            else:
+                logger.warning(f"[VM-BACKUP] Celery broker non accessible, utilisation du fallback sur threads")
+        except Exception as e:
+            logger.warning(f"[VM-BACKUP] Celery non disponible ({e}), utilisation du fallback sur threads")
+
+        if use_celery:
+            # Lancer avec Celery
             execute_vm_backup.delay(backup_job.id)
             logger.info(f"[VM-BACKUP] Backup créé et tâche Celery lancée: {backup_job.id} - {backup_type} - {vm_name}")
-        except Exception as e:
-            # Si Celery n'est pas disponible, exécuter dans un thread séparé
-            logger.warning(f"[VM-BACKUP] Celery non disponible, exécution en thread: {e}")
-
+        else:
+            # Fallback : exécuter dans un thread séparé
             import threading
 
             def run_backup_in_thread():
