@@ -23,18 +23,20 @@
 
       <div class="restore-form">
         <div class="form-group">
-          <label>Serveur ESXi</label>
-          <select v-model="selectedServer" @change="onServerChange" required>
-            <option value="">Sélectionnez un serveur</option>
+          <label>Serveur ESXi de Destination</label>
+          <select v-model="vmRestoreForm.esxi_server_id" @change="onVMRestoreServerChange" required>
+            <option value="">Sélectionnez un serveur ESXi</option>
             <option v-for="server in servers" :key="server.id" :value="server.id">
-              {{ server.hostname }}
+              {{ server.name || server.hostname }} ({{ server.hostname }})
             </option>
           </select>
+          <small>Serveur ESXi où la VM sera restaurée</small>
         </div>
 
         <div class="form-group">
           <label>Nom de la VM</label>
           <input v-model="vmRestoreForm.vm_name" type="text" placeholder="WebServer" />
+          <small>Nom de la VM source (pour retrouver les backups)</small>
         </div>
 
         <div class="form-group">
@@ -53,12 +55,13 @@
 
         <div class="form-group">
           <label>Datastore de Destination</label>
-          <select v-model="vmRestoreForm.target_datastore" :disabled="!selectedServer">
-            <option value="">{{ selectedServer ? 'Sélectionnez un datastore' : 'Sélectionnez d\'abord un serveur' }}</option>
-            <option v-for="ds in datastores" :key="ds.name" :value="ds.name">
-              {{ ds.name }} ({{ ds.free_space_gb }} GB libre)
+          <select v-model="vmRestoreForm.target_datastore" :disabled="!vmRestoreForm.esxi_server_id" required>
+            <option value="">{{ vmRestoreForm.esxi_server_id ? 'Sélectionnez un datastore' : 'Sélectionnez d\'abord un serveur' }}</option>
+            <option v-for="ds in vmRestoreDatastores" :key="ds.name" :value="ds.name">
+              {{ ds.name }} ({{ ds.free_space_gb }} GB libre / {{ ds.capacity_gb }} GB total)
             </option>
           </select>
+          <small>Emplacement de stockage sur le serveur ESXi</small>
         </div>
 
         <div class="form-group">
@@ -113,18 +116,20 @@
 
       <div class="restore-form">
         <div class="form-group">
-          <label>Serveur ESXi</label>
-          <select v-model="selectedServer" @change="onServerChange" required>
-            <option value="">Sélectionnez un serveur</option>
+          <label>Serveur ESXi de Destination</label>
+          <select v-model="vmdkRestoreForm.esxi_server_id" @change="onVMDKRestoreServerChange" required>
+            <option value="">Sélectionnez un serveur ESXi</option>
             <option v-for="server in servers" :key="server.id" :value="server.id">
-              {{ server.hostname }}
+              {{ server.name || server.hostname }} ({{ server.hostname }})
             </option>
           </select>
+          <small>Serveur ESXi où le VMDK sera restauré</small>
         </div>
 
         <div class="form-group">
           <label>Nom de la VM</label>
           <input v-model="vmdkRestoreForm.vm_name" type="text" placeholder="WebServer" />
+          <small>Nom de la VM source (pour retrouver les backups)</small>
         </div>
 
         <div class="form-group">
@@ -152,12 +157,13 @@
 
         <div class="form-group">
           <label>Datastore de Destination</label>
-          <select v-model="vmdkRestoreForm.target_datastore" :disabled="!selectedServer">
-            <option value="">{{ selectedServer ? 'Sélectionnez un datastore' : 'Sélectionnez d\'abord un serveur' }}</option>
-            <option v-for="ds in datastores" :key="ds.name" :value="ds.name">
-              {{ ds.name }}
+          <select v-model="vmdkRestoreForm.target_datastore" :disabled="!vmdkRestoreForm.esxi_server_id" required>
+            <option value="">{{ vmdkRestoreForm.esxi_server_id ? 'Sélectionnez un datastore' : 'Sélectionnez d\'abord un serveur' }}</option>
+            <option v-for="ds in vmdkRestoreDatastores" :key="ds.name" :value="ds.name">
+              {{ ds.name }} ({{ ds.free_space_gb }} GB libre / {{ ds.capacity_gb }} GB total)
             </option>
           </select>
+          <small>Emplacement de stockage sur le serveur ESXi</small>
         </div>
 
         <div class="form-group">
@@ -381,6 +387,8 @@ const tabs = [
 const servers = ref([])
 const selectedServer = ref('')
 const datastores = ref([])
+const vmRestoreDatastores = ref([])
+const vmdkRestoreDatastores = ref([])
 const isRestoring = ref(false)
 const showResults = ref(false)
 const resultsTitle = ref('')
@@ -400,6 +408,7 @@ const searchResults = ref([])
 
 // Forms
 const vmRestoreForm = ref({
+  esxi_server_id: '',
   vm_name: '',
   backup_id: '',
   target_datastore: '',
@@ -409,6 +418,7 @@ const vmRestoreForm = ref({
 })
 
 const vmdkRestoreForm = ref({
+  esxi_server_id: '',
   vm_name: '',
   backup_id: '',
   vmdk_filename: '',
@@ -456,6 +466,38 @@ async function loadDatastores(serverId) {
     datastores.value = response.data
   } catch (error) {
     console.error('Erreur chargement datastores:', error)
+  }
+}
+
+async function onVMRestoreServerChange() {
+  // Réinitialiser le datastore sélectionné
+  vmRestoreForm.value.target_datastore = ''
+  vmRestoreDatastores.value = []
+
+  if (vmRestoreForm.value.esxi_server_id) {
+    try {
+      const response = await datastoresAPI.getAll({ server: vmRestoreForm.value.esxi_server_id })
+      vmRestoreDatastores.value = response.data
+    } catch (error) {
+      console.error('Erreur chargement datastores:', error)
+      alert('Impossible de charger les datastores du serveur')
+    }
+  }
+}
+
+async function onVMDKRestoreServerChange() {
+  // Réinitialiser le datastore sélectionné
+  vmdkRestoreForm.value.target_datastore = ''
+  vmdkRestoreDatastores.value = []
+
+  if (vmdkRestoreForm.value.esxi_server_id) {
+    try {
+      const response = await datastoresAPI.getAll({ server: vmdkRestoreForm.value.esxi_server_id })
+      vmdkRestoreDatastores.value = response.data
+    } catch (error) {
+      console.error('Erreur chargement datastores:', error)
+      alert('Impossible de charger les datastores du serveur')
+    }
   }
 }
 
