@@ -8,7 +8,10 @@
           </svg>
           <div class="text-sm text-blue-800">
             <p class="font-medium">Sauvegarde à restaurer:</p>
-            <p class="mt-1">{{ backupJob?.backup_location }}</p>
+            <p class="mt-1">{{ backupJob?.backup_full_path || backupJob?.backup_location }}</p>
+            <p v-if="backupJob?.backup_size_mb" class="mt-1 text-xs">
+              Taille: {{ backupJob.backup_size_mb.toFixed(2) }} MB
+            </p>
           </div>
         </div>
       </div>

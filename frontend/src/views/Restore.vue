@@ -38,9 +38,17 @@
         </div>
 
         <div class="form-group">
-          <label>ID de la Sauvegarde</label>
-          <input v-model="vmRestoreForm.backup_id" type="text" placeholder="full_18-01-2025_14-00-00" />
-          <small>Format: full_DD-MM-YYYY_HH-MM-SS ou incr_DD-MM-YYYY_HH-MM-SS</small>
+          <label>Sauvegarde à Restaurer</label>
+          <select v-model="vmRestoreForm.backup_id" :disabled="!vmRestoreForm.vm_name">
+            <option value="">{{ vmRestoreForm.vm_name ? 'Sélectionnez une sauvegarde' : 'Sélectionnez d\'abord une VM' }}</option>
+            <option v-for="backup in availableBackups" :key="backup.id" :value="backup.id">
+              {{ backup.id }} - {{ backup.type }} - {{ backup.size_mb }} MB - {{ backup.timestamp }}
+            </option>
+          </select>
+          <button v-if="vmRestoreForm.vm_name" @click="loadBackupsForVM" class="btn btn-small" type="button">
+            Rafraîchir
+          </button>
+          <small>Sélectionnez la sauvegarde à restaurer</small>
         </div>
 
         <div class="form-group">
@@ -120,9 +128,16 @@
         </div>
 
         <div class="form-group">
-          <label>ID de la Sauvegarde</label>
-          <input v-model="vmdkRestoreForm.backup_id" type="text" placeholder="full_18-01-2025_14-00-00" />
-          <button @click="listVMDKs" class="btn btn-small">Lister les VMDK</button>
+          <label>Sauvegarde à Restaurer</label>
+          <select v-model="vmdkRestoreForm.backup_id" :disabled="!vmdkRestoreForm.vm_name">
+            <option value="">{{ vmdkRestoreForm.vm_name ? 'Sélectionnez une sauvegarde' : 'Sélectionnez d\'abord une VM' }}</option>
+            <option v-for="backup in availableBackups" :key="backup.id" :value="backup.id">
+              {{ backup.id }} - {{ backup.type }} - {{ backup.size_mb }} MB
+            </option>
+          </select>
+          <button v-if="vmdkRestoreForm.vm_name && vmdkRestoreForm.backup_id" @click="listVMDKs" class="btn btn-small" type="button">
+            Lister les VMDK
+          </button>
         </div>
 
         <div class="form-group">
@@ -203,8 +218,13 @@
         </div>
 
         <div class="form-group">
-          <label>ID de la Sauvegarde</label>
-          <input v-model="fileRecoveryForm.backup_id" type="text" placeholder="full_18-01-2025_14-00-00" />
+          <label>Sauvegarde à Restaurer</label>
+          <select v-model="fileRecoveryForm.backup_id" :disabled="!fileRecoveryForm.vm_name">
+            <option value="">{{ fileRecoveryForm.vm_name ? 'Sélectionnez une sauvegarde' : 'Sélectionnez d\'abord une VM' }}</option>
+            <option v-for="backup in availableBackups" :key="backup.id" :value="backup.id">
+              {{ backup.id }} - {{ backup.type }} - {{ backup.size_mb }} MB
+            </option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -370,6 +390,7 @@ const validationResults = ref({
   vmdk: null
 })
 const availableVMDKs = ref([])
+const availableBackups = ref([])
 const fileBrowser = ref({
   current_path: '/',
   files: [],
@@ -438,6 +459,29 @@ async function loadDatastores(serverId) {
   }
 }
 
+async function loadBackupsForVM() {
+  if (!vmRestoreForm.value.vm_name && !vmdkRestoreForm.value.vm_name && !fileRecoveryForm.value.vm_name) {
+    alert('Veuillez saisir un nom de VM d\'abord')
+    return
+  }
+
+  // Utiliser le nom de VM du formulaire actif
+  const vmName = vmRestoreForm.value.vm_name || vmdkRestoreForm.value.vm_name || fileRecoveryForm.value.vm_name
+
+  try {
+    // Appeler l'API pour récupérer la liste des backups pour cette VM
+    const response = await restoreAPI.listBackups(vmName)
+    availableBackups.value = response.data.backups || []
+
+    if (availableBackups.value.length === 0) {
+      alert(`Aucune sauvegarde trouvée pour la VM "${vmName}"`)
+    }
+  } catch (error) {
+    console.error('Erreur chargement backups:', error)
+    alert('Erreur lors du chargement des sauvegardes: ' + (error.response?.data?.error || error.message))
+  }
+}
+
 // VM Restore
 async function validateVMRestore() {
   try {
@@ -482,13 +526,23 @@ async function restoreVM() {
 
 // VMDK Restore
 async function listVMDKs() {
+  if (!vmdkRestoreForm.value.vm_name || !vmdkRestoreForm.value.backup_id) {
+    alert('Veuillez remplir le nom de la VM et sélectionner une sauvegarde')
+    return
+  }
+
   try {
+    // Appeler l'API avec le bon format: GET /api/restore/{backup_id}/list-vmdks/?vm_name=X
     const response = await restoreAPI.listVMDKs(
       vmdkRestoreForm.value.backup_id,
       vmdkRestoreForm.value.vm_name
     )
 
-    availableVMDKs.value = response.data.vmdks
+    availableVMDKs.value = response.data.vmdks || []
+
+    if (availableVMDKs.value.length === 0) {
+      alert('Aucun VMDK trouvé dans cette sauvegarde')
+    }
   } catch (error) {
     console.error('Erreur listage VMDK:', error)
     alert('Erreur: ' + (error.response?.data?.error || error.message))
