@@ -1575,6 +1575,51 @@ class RestoreViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['get'], url_path='list-backups')
+    def list_backups(self, request, pk=None):
+        """
+        Liste tous les backups disponibles pour une VM
+
+        GET /api/restore/{vm_name}/list-backups/
+        """
+        vm_name = pk
+
+        if not vm_name:
+            return Response(
+                {'error': 'Le paramètre vm_name est requis'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Récupérer le remote storage par défaut
+            try:
+                remote_storage = RemoteStorageConfig.objects.get(is_default=True, is_active=True)
+            except RemoteStorageConfig.DoesNotExist:
+                return Response(
+                    {'error': 'Aucun remote storage par défaut configuré'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Initialiser le chain manager
+            from backups.backup_chain.chain_manager import BackupChainManager
+            chain_manager = BackupChainManager(remote_storage, vm_name)
+
+            # Récupérer tous les backups pour cette VM
+            backups_list = chain_manager.list_all_backups()
+
+            return Response({
+                'vm_name': vm_name,
+                'backups': backups_list,
+                'count': len(backups_list)
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"[RESTORE-API] Erreur listage backups: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ==========================================================
 # 🔹 BACKUP CHAIN API
