@@ -25,6 +25,40 @@
         </p>
       </div>
 
+      <!-- Mode de Backup (OVF vs VMDK) -->
+      <div class="border-2 rounded-lg p-4" :class="form.backup_mode === 'ovf' ? 'border-green-500 bg-green-50' : 'border-gray-300'">
+        <label class="label flex items-center">
+          <svg class="w-5 h-5 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Mode de backup (Recommandé: OVF)
+        </label>
+        <select v-model="form.backup_mode" required class="input-field mt-2">
+          <option value="ovf">✅ OVF Export (Optimisé thin-provisioning - Recommandé)</option>
+          <option value="vmdk">⚠️ VMDK Direct (Copie disque complet)</option>
+        </select>
+        <div v-if="form.backup_mode === 'ovf'" class="mt-2 p-3 bg-green-100 rounded-lg">
+          <p class="text-sm text-green-800 font-medium">✅ Mode OVF (Recommandé)</p>
+          <ul class="mt-1 text-xs text-green-700 list-disc list-inside space-y-1">
+            <li>Télécharge uniquement les données réelles (~34.6%)</li>
+            <li>Gère correctement le thin provisioning</li>
+            <li>Format standard VMware (100% restaurable)</li>
+            <li>Exemple: VM 500GB alloué, 50GB utilisés → backup 17GB</li>
+            <li>Beaucoup plus rapide et économe en espace disque</li>
+          </ul>
+        </div>
+        <div v-else class="mt-2 p-3 bg-yellow-100 rounded-lg">
+          <p class="text-sm text-yellow-800 font-medium">⚠️ Mode VMDK (Legacy)</p>
+          <ul class="mt-1 text-xs text-yellow-700 list-disc list-inside space-y-1">
+            <li>Télécharge le fichier VMDK complet (100%)</li>
+            <li>Ne gère PAS le thin provisioning</li>
+            <li>Exemple: VM 500GB alloué, 50GB utilisés → backup 500GB</li>
+            <li>Beaucoup plus lent et consomme énormément d'espace</li>
+            <li>À utiliser uniquement si besoin spécifique</li>
+          </ul>
+        </div>
+      </div>
+
       <!-- Intervalle Full Backup (pour full_weekly) -->
       <div v-if="form.backup_strategy === 'full_weekly'">
         <label class="label">Intervalle Full Backup (jours)</label>
@@ -233,6 +267,7 @@ const form = reactive({
   is_active: true,
   // Nouveaux champs Phase 5
   backup_strategy: 'full_weekly',
+  backup_mode: 'ovf',  // OVF par défaut (recommandé pour thin provisioning)
   full_backup_interval_days: 7,
   backup_configuration: null,
   remote_storage: null,
@@ -281,6 +316,7 @@ watch(() => props.schedule, (newSchedule) => {
     form.is_active = newSchedule.is_active !== undefined ? newSchedule.is_active : true
     // Nouveaux champs Phase 5
     form.backup_strategy = newSchedule.backup_strategy || 'full_weekly'
+    form.backup_mode = newSchedule.backup_mode || 'ovf'
     form.full_backup_interval_days = newSchedule.full_backup_interval_days || 7
     form.backup_configuration = newSchedule.backup_configuration || null
     form.remote_storage = newSchedule.remote_storage || null
@@ -331,6 +367,7 @@ function resetForm() {
   form.is_active = true
   // Nouveaux champs Phase 5
   form.backup_strategy = 'full_weekly'
+  form.backup_mode = 'ovf'  // OVF par défaut
   form.full_backup_interval_days = 7
   form.backup_configuration = null
   form.remote_storage = null
