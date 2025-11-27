@@ -486,7 +486,7 @@ class VMBackupService:
                                 logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB / {total_mb:.1f} MB ({download_percentage:.1f}%) - Progression: {global_progress}%")
                             else:
                                 # Si pas de total connu, estimer la progression basée sur les MB téléchargés
-                                # Heuristique: 0-1GB=5-20%, 1-5GB=20-50%, 5-20GB=50-80%, 20+GB=80-90%
+                                # Heuristique améliorée pour les gros backups
                                 global_downloaded_mb = self.backup_job.downloaded_bytes / (1024 * 1024)
                                 downloaded_gb = global_downloaded_mb / 1024
 
@@ -494,21 +494,30 @@ class VMBackupService:
                                     # 0-1 GB: progression de 5% à 20%
                                     global_progress = 5 + int(downloaded_gb * 15)
                                 elif downloaded_gb < 5:
-                                    # 1-5 GB: progression de 20% à 50%
-                                    global_progress = 20 + int((downloaded_gb - 1) * 7.5)
+                                    # 1-5 GB: progression de 20% à 40%
+                                    global_progress = 20 + int((downloaded_gb - 1) * 5)
+                                elif downloaded_gb < 10:
+                                    # 5-10 GB: progression de 40% à 55%
+                                    global_progress = 40 + int((downloaded_gb - 5) * 3)
                                 elif downloaded_gb < 20:
-                                    # 5-20 GB: progression de 50% à 80%
-                                    global_progress = 50 + int((downloaded_gb - 5) * 2)
+                                    # 10-20 GB: progression de 55% à 70%
+                                    global_progress = 55 + int((downloaded_gb - 10) * 1.5)
+                                elif downloaded_gb < 50:
+                                    # 20-50 GB: progression de 70% à 82%
+                                    global_progress = 70 + int((downloaded_gb - 20) * 0.4)
+                                elif downloaded_gb < 100:
+                                    # 50-100 GB: progression de 82% à 90% (~5GB par 1%)
+                                    global_progress = 82 + int((downloaded_gb - 50) * 0.2)
                                 else:
-                                    # 20+ GB: progression de 80% à 90%
-                                    global_progress = 80 + min(10, int((downloaded_gb - 20) * 0.5))
+                                    # 100+ GB: reste à 90%
+                                    global_progress = 90
 
                                 global_progress = min(global_progress, 90)  # Toujours cap à 90%
                                 self.backup_job.progress_percentage = global_progress
                                 self.backup_job.save()
 
                                 speed = self.backup_job.download_speed_mbps
-                                logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB ({speed:.1f} MB/s) - Progression: {global_progress}%")
+                                logger.info(f"[VM-BACKUP] Téléchargé: {global_downloaded_mb:.1f} MB ({downloaded_gb:.1f} GB) ({speed:.1f} MB/s) - Progression: {global_progress}%")
 
                             last_logged_mb = int(downloaded_mb)
 
