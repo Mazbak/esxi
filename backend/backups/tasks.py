@@ -2,7 +2,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-from backups.models import BackupJob, BackupSchedule
+from backups.models import BackupJob, BackupSchedule, OVFExportJob
 from backups.backup_service import BackupService
 from backups.backup_scheduler_service import BackupSchedulerService
 
@@ -70,11 +70,15 @@ def check_and_execute_schedules():
                     schedule.next_run = scheduler.get_next_run_time()
                     schedule.save()
 
-                    # Exécuter le job de manière asynchrone
-                    execute_backup_job.delay(job.id)
+                    # Exécuter le job de manière asynchrone selon le type
+                    if isinstance(job, OVFExportJob):
+                        execute_ovf_export.delay(job.id)
+                        logger.info(f"[CELERY-SCHEDULER] ✓ OVFExportJob {job.id} créé et lancé pour schedule {schedule.id}")
+                    else:
+                        execute_backup_job.delay(job.id)
+                        logger.info(f"[CELERY-SCHEDULER] ✓ BackupJob {job.id} créé et lancé pour schedule {schedule.id}")
 
                     executed_count += 1
-                    logger.info(f"[CELERY-SCHEDULER] ✓ Job {job.id} créé et lancé pour schedule {schedule.id}")
                 else:
                     failed_count += 1
                     logger.error(f"[CELERY-SCHEDULER] ✗ Échec création job pour schedule {schedule.id}")
