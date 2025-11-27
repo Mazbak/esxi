@@ -2,7 +2,7 @@ import logging
 from celery import shared_task
 from django.utils import timezone
 
-from backups.models import BackupJob, BackupSchedule, OVFExportJob
+from backups.models import BackupJob, BackupSchedule, OVFExportJob, SnapshotSchedule, Snapshot
 from backups.backup_service import BackupService
 from backups.backup_scheduler_service import BackupSchedulerService
 
@@ -103,6 +103,237 @@ def check_and_execute_schedules():
         'skipped': skipped_count,
         'failed': failed_count
     }
+
+
+@shared_task
+def check_and_execute_snapshot_schedules():
+    """
+    Tâche périodique pour vérifier et exécuter les schedules de snapshot
+
+    Cette tâche doit être exécutée régulièrement (ex: toutes les heures)
+    pour vérifier si des snapshots planifiés doivent être créés.
+    """
+    logger.info("[CELERY-SNAPSHOT-SCHEDULER] === VÉRIFICATION DES SNAPSHOT SCHEDULES ===")
+
+    # Récupérer tous les schedules actifs
+    active_schedules = SnapshotSchedule.objects.filter(is_active=True)
+
+    logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] {active_schedules.count()} snapshot schedule(s) actif(s)")
+
+    executed_count = 0
+    skipped_count = 0
+    failed_count = 0
+
+    for schedule in active_schedules:
+        try:
+            logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] Vérification snapshot schedule {schedule.id} ({schedule.virtual_machine.name})")
+
+            # Vérifier si le schedule doit être exécuté maintenant
+            now = timezone.now()
+
+            # Si next_run n'est pas défini, le calculer
+            if not schedule.next_run:
+                schedule.next_run = schedule.calculate_next_run()
+                schedule.save()
+                logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] Next run calculé: {schedule.next_run}")
+
+            # Vérifier si c'est le moment d'exécuter
+            if schedule.next_run and schedule.next_run <= now:
+                logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] ✓ Exécution du snapshot schedule {schedule.id}")
+
+                # Lancer la tâche de création de snapshot
+                execute_snapshot.delay(
+                    schedule_id=schedule.id,
+                    vm_id=schedule.virtual_machine.id,
+                    include_memory=schedule.include_memory
+                )
+
+                # Mettre à jour le schedule
+                schedule.last_run = now
+                schedule.next_run = schedule.calculate_next_run()
+                schedule.save()
+
+                executed_count += 1
+                logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] ✓ Snapshot task lancée, prochain run: {schedule.next_run}")
+            else:
+                skipped_count += 1
+                time_until = (schedule.next_run - now).total_seconds() / 60
+                logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] ⊘ Schedule {schedule.id} non éligible (prochain run dans {time_until:.0f} min)")
+
+        except Exception as e:
+            failed_count += 1
+            logger.error(
+                f"[CELERY-SNAPSHOT-SCHEDULER] ✗ Erreur traitement snapshot schedule {schedule.id}: {e}",
+                exc_info=True
+            )
+
+    logger.info("[CELERY-SNAPSHOT-SCHEDULER] === RÉSUMÉ ===")
+    logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] Exécutés: {executed_count}")
+    logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] Ignorés: {skipped_count}")
+    logger.info(f"[CELERY-SNAPSHOT-SCHEDULER] Échecs: {failed_count}")
+
+    return {
+        'executed': executed_count,
+        'skipped': skipped_count,
+        'failed': failed_count
+    }
+
+
+@shared_task
+def execute_snapshot(schedule_id, vm_id, include_memory=False):
+    """
+    Tâche pour créer un snapshot automatique
+
+    Args:
+        schedule_id: ID du SnapshotSchedule
+        vm_id: ID de la VirtualMachine
+        include_memory: Inclure la mémoire RAM dans le snapshot
+    """
+    from datetime import datetime
+    from esxi.models import VirtualMachine
+    from esxi.vmware_service import VMwareService
+
+    logger.info(f"[CELERY-SNAPSHOT] === CRÉATION SNAPSHOT AUTOMATIQUE ===")
+    logger.info(f"[CELERY-SNAPSHOT] Schedule ID: {schedule_id}, VM ID: {vm_id}")
+
+    snapshot = None
+
+    try:
+        # Récupérer la VM et le schedule
+        vm = VirtualMachine.objects.get(id=vm_id)
+        schedule = SnapshotSchedule.objects.get(id=schedule_id)
+
+        logger.info(f"[CELERY-SNAPSHOT] VM: {vm.name}, Include memory: {include_memory}")
+
+        # Générer le nom du snapshot
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        snapshot_name = f"auto-{vm.name}-{timestamp}"
+
+        # Créer l'enregistrement Snapshot
+        snapshot = Snapshot.objects.create(
+            virtual_machine=vm,
+            schedule=schedule,
+            snapshot_name=snapshot_name,
+            description=f"Snapshot automatique créé par planification - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            status='creating',
+            include_memory=include_memory
+        )
+
+        logger.info(f"[CELERY-SNAPSHOT] Snapshot DB créé: {snapshot.id}")
+
+        # Connexion au serveur ESXi
+        esxi_server = vm.server
+        vmware = VMwareService(
+            host=esxi_server.hostname,
+            user=esxi_server.username,
+            password=esxi_server.password,
+            port=esxi_server.port
+        )
+
+        if vmware.connect():
+            try:
+                # Créer le snapshot sur ESXi
+                logger.info(f"[CELERY-SNAPSHOT] Création snapshot ESXi: {snapshot_name}")
+
+                success = vmware.create_snapshot(
+                    vm_id=vm.vm_id,
+                    snapshot_name=snapshot_name,
+                    description=snapshot.description,
+                    memory=include_memory
+                )
+
+                if success:
+                    snapshot.status = 'completed'
+                    snapshot.save()
+                    logger.info(f"[CELERY-SNAPSHOT] ✓ Snapshot créé avec succès: {snapshot_name}")
+
+                    # Appliquer la politique de rétention
+                    cleanup_old_snapshots(schedule, vm)
+
+                    return {'status': 'success', 'snapshot_id': snapshot.id, 'snapshot_name': snapshot_name}
+                else:
+                    snapshot.status = 'failed'
+                    snapshot.save()
+                    logger.error(f"[CELERY-SNAPSHOT] ✗ Échec création snapshot: {snapshot_name}")
+                    return {'status': 'failed', 'error': 'Snapshot creation failed'}
+
+            finally:
+                vmware.disconnect()
+        else:
+            snapshot.status = 'failed'
+            snapshot.save()
+            logger.error(f"[CELERY-SNAPSHOT] ✗ Connexion ESXi échouée")
+            return {'status': 'failed', 'error': 'ESXi connection failed'}
+
+    except VirtualMachine.DoesNotExist:
+        logger.error(f"[CELERY-SNAPSHOT] VM {vm_id} introuvable")
+        return {'status': 'failed', 'error': f'VM {vm_id} not found'}
+    except SnapshotSchedule.DoesNotExist:
+        logger.error(f"[CELERY-SNAPSHOT] Schedule {schedule_id} introuvable")
+        return {'status': 'failed', 'error': f'Schedule {schedule_id} not found'}
+    except Exception as e:
+        logger.error(f"[CELERY-SNAPSHOT] ✗ Erreur création snapshot: {e}", exc_info=True)
+        if snapshot:
+            snapshot.status = 'failed'
+            snapshot.save()
+        return {'status': 'failed', 'error': str(e)}
+
+
+def cleanup_old_snapshots(schedule, vm):
+    """
+    Nettoie les anciens snapshots selon la politique de rétention
+
+    Args:
+        schedule: SnapshotSchedule avec retention_count
+        vm: VirtualMachine
+    """
+    try:
+        # Récupérer tous les snapshots de ce schedule pour cette VM, triés par date
+        snapshots = Snapshot.objects.filter(
+            virtual_machine=vm,
+            schedule=schedule,
+            status='completed'
+        ).order_by('-created_at')
+
+        retention_count = schedule.retention_count
+        total_count = snapshots.count()
+
+        logger.info(f"[CELERY-SNAPSHOT-CLEANUP] Total snapshots: {total_count}, Rétention: {retention_count}")
+
+        # Si on dépasse la limite de rétention
+        if total_count > retention_count:
+            snapshots_to_delete = snapshots[retention_count:]
+
+            logger.info(f"[CELERY-SNAPSHOT-CLEANUP] {len(snapshots_to_delete)} snapshot(s) à supprimer")
+
+            # Supprimer les anciens snapshots
+            for snap in snapshots_to_delete:
+                try:
+                    # Supprimer sur ESXi
+                    esxi_server = vm.server
+                    vmware = VMwareService(
+                        host=esxi_server.hostname,
+                        user=esxi_server.username,
+                        password=esxi_server.password,
+                        port=esxi_server.port
+                    )
+
+                    if vmware.connect():
+                        try:
+                            vmware.delete_snapshot(vm.vm_id, snap.snapshot_name)
+                            logger.info(f"[CELERY-SNAPSHOT-CLEANUP] ✓ Snapshot supprimé sur ESXi: {snap.snapshot_name}")
+                        finally:
+                            vmware.disconnect()
+
+                    # Supprimer de la DB
+                    snap.delete()
+                    logger.info(f"[CELERY-SNAPSHOT-CLEANUP] ✓ Snapshot supprimé de la DB: {snap.snapshot_name}")
+
+                except Exception as e:
+                    logger.error(f"[CELERY-SNAPSHOT-CLEANUP] ✗ Erreur suppression {snap.snapshot_name}: {e}")
+
+    except Exception as e:
+        logger.error(f"[CELERY-SNAPSHOT-CLEANUP] ✗ Erreur nettoyage: {e}", exc_info=True)
 
 
 @shared_task
