@@ -506,11 +506,11 @@ class VMBackupService:
                                     # 20-50 GB: progression de 70% à 82%
                                     global_progress = 70 + int((downloaded_gb - 20) * 0.4)
                                 elif downloaded_gb < 100:
-                                    # 50-100 GB: progression de 82% à 87%
-                                    global_progress = 82 + int((downloaded_gb - 50) * 0.1)
+                                    # 50-100 GB: progression de 82% à 90% (~5GB par 1%)
+                                    global_progress = 82 + int((downloaded_gb - 50) * 0.2)
                                 else:
-                                    # 100+ GB: progression de 87% à 90% (très lentement)
-                                    global_progress = 87 + min(3, int((downloaded_gb - 100) * 0.03))
+                                    # 100+ GB: reste à 90%
+                                    global_progress = 90
 
                                 global_progress = min(global_progress, 90)  # Toujours cap à 90%
                                 self.backup_job.progress_percentage = global_progress
