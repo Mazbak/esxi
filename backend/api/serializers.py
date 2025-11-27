@@ -64,11 +64,13 @@ class BackupJobCreateSerializer(serializers.ModelSerializer):
 class BackupScheduleSerializer(serializers.ModelSerializer):
     vm_name = serializers.CharField(source='virtual_machine.name', read_only=True)
     schedule_description = serializers.CharField(source='get_schedule_description', read_only=True)
+    remote_storage_name = serializers.CharField(source='remote_storage.name', read_only=True, allow_null=True)
 
     class Meta:
         model = BackupSchedule
         fields = ['id', 'virtual_machine', 'vm_name', 'frequency', 'time_hour', 'time_minute',
-                  'day_of_week', 'day_of_month', 'is_active', 'last_run', 'next_run',
+                  'day_of_week', 'day_of_month', 'backup_mode', 'backup_strategy', 'remote_storage',
+                  'remote_storage_name', 'is_active', 'last_run', 'next_run',
                   'schedule_description', 'created_at']
         read_only_fields = ['id', 'last_run', 'next_run', 'created_at']
 

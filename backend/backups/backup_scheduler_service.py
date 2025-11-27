@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from django.utils import timezone
 
-from backups.models import BackupJob, BackupSchedule, RemoteStorageConfig
+from backups.models import BackupJob, BackupSchedule, RemoteStorageConfig, OVFExportJob
 from backups.backup_chain.chain_manager import BackupChainManager
 
 logger = logging.getLogger(__name__)
@@ -112,17 +112,23 @@ class BackupSchedulerService:
 
     def _determine_backup_mode(self) -> str:
         """
-        Détermine le mode de backup (ovf ou cbt)
+        Détermine le mode de backup (ovf ou vmdk)
 
         Returns:
-            'ovf' ou 'cbt'
+            'ovf' ou 'vmdk'
         """
-        # Vérifier si CBT est activé pour la VM
+        # Priorité 1: Utiliser le backup_mode du schedule si défini
+        if hasattr(self.schedule, 'backup_mode') and self.schedule.backup_mode:
+            mode = self.schedule.backup_mode
+            logger.info(f"[SCHEDULER] Mode défini dans schedule → {mode}")
+            return mode
+
+        # Priorité 2: Vérifier si CBT est activé pour la VM (legacy)
         if hasattr(self.vm, 'is_cbt_enabled') and self.vm.is_cbt_enabled:
-            logger.info("[SCHEDULER] CBT activé pour la VM → Mode CBT")
+            logger.info("[SCHEDULER] CBT activé pour la VM → Mode CBT (legacy)")
             return 'cbt'
         else:
-            logger.info("[SCHEDULER] CBT non activé → Mode OVF")
+            logger.info("[SCHEDULER] Pas de mode spécifique → Mode OVF par défaut (recommandé)")
             return 'ovf'
 
     def _check_incremental_possible(self) -> str:
@@ -244,10 +250,10 @@ class BackupSchedulerService:
 
     def create_scheduled_backup_job(self) -> Optional[BackupJob]:
         """
-        Crée un BackupJob basé sur la planification
+        Crée un BackupJob ou OVFExportJob basé sur la planification
 
         Returns:
-            BackupJob créé ou None si erreur
+            BackupJob ou OVFExportJob créé, ou None si erreur
         """
         try:
             # Déterminer le type et le mode
@@ -257,20 +263,38 @@ class BackupSchedulerService:
 
             # Récupérer la configuration de backup
             backup_config = self.schedule.backup_configuration
+            remote_storage = getattr(self.schedule, 'remote_storage', None)
+            backup_location = backup_config.backup_location if backup_config else None
 
-            # Créer le BackupJob
-            job = BackupJob.objects.create(
-                virtual_machine=self.vm,
-                backup_configuration=backup_config,
-                job_type=job_type,
-                backup_mode=backup_mode,
-                backup_location=backup_config.backup_location if backup_config else None,
-                status='pending',
-                remote_storage=getattr(self.schedule, 'remote_storage', None),
-                scheduled_by=self.schedule
-            )
+            # Si mode OVF, créer un OVFExportJob (recommandé)
+            if backup_mode == 'ovf':
+                logger.info(f"[SCHEDULER] Mode OVF → Création OVFExportJob (thin-provisioning optimisé)")
 
-            logger.info(f"[SCHEDULER] ✓ Job créé: {job.id} ({job_type}/{backup_mode})")
+                job = OVFExportJob.objects.create(
+                    virtual_machine=self.vm,
+                    export_location=backup_location or '/backups/ovf',
+                    remote_storage=remote_storage,
+                    scheduled_by=self.schedule,
+                    status='pending'
+                )
+
+                logger.info(f"[SCHEDULER] ✓ OVFExportJob créé: {job.id} (optimisé ~34.6%)")
+            else:
+                # Mode VMDK legacy - créer BackupJob classique
+                logger.info(f"[SCHEDULER] Mode {backup_mode} → Création BackupJob (legacy)")
+
+                job = BackupJob.objects.create(
+                    virtual_machine=self.vm,
+                    backup_configuration=backup_config,
+                    job_type=job_type,
+                    backup_mode=backup_mode,
+                    backup_location=backup_location,
+                    status='pending',
+                    remote_storage=remote_storage,
+                    scheduled_by=self.schedule
+                )
+
+                logger.info(f"[SCHEDULER] ✓ BackupJob créé: {job.id} ({job_type}/{backup_mode})")
 
             return job
 

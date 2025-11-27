@@ -534,8 +534,21 @@ class BackupSchedule(models.Model):
         ('smart', 'Smart (Auto-decide)')
     ]
 
+    BACKUP_MODE_CHOICES = [
+        ('ovf', 'OVF Export (Optimisé thin-provisioning - Recommandé)'),
+        ('vmdk', 'VMDK Direct (Copie disque complet)'),
+    ]
+
     virtual_machine = models.ForeignKey(VirtualMachine, on_delete=models.CASCADE, related_name='backup_schedules')
     frequency = models.CharField(max_length=50, choices=FREQUENCY_CHOICES, default='daily')
+
+    # Mode de backup (OVF recommandé pour thin provisioning)
+    backup_mode = models.CharField(
+        max_length=50,
+        choices=BACKUP_MODE_CHOICES,
+        default='ovf',
+        help_text="OVF Export (recommandé): télécharge uniquement données réelles (~34.6%). VMDK: télécharge disque complet."
+    )
 
     # Personnalisation de la planification
     time_hour = models.IntegerField(default=2, help_text="Heure d'exécution (0-23)")
