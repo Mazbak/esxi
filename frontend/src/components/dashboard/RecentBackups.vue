@@ -40,7 +40,7 @@
     </div>
 
     <div v-if="backups.length > 0" class="mt-4 text-center">
-      <router-link to="/backups" class="text-primary-600 hover:text-primary-700 text-sm font-medium">
+      <router-link to="/ovf-exports" class="text-primary-600 hover:text-primary-700 text-sm font-medium">
         Voir toutes les sauvegardes →
       </router-link>
     </div>
