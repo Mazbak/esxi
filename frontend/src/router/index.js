@@ -46,6 +46,16 @@ const router = createRouter({
           component: () => import('@/views/Restore.vue'),
         },
         {
+          path: 'replication',
+          name: 'replication',
+          component: () => import('@/views/Replication.vue'),
+        },
+        {
+          path: 'surebackup',
+          name: 'surebackup',
+          component: () => import('@/views/SureBackup.vue'),
+        },
+        {
           path: 'schedules',
           name: 'schedules',
           component: () => import('@/views/Schedules.vue'),

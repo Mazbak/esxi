@@ -175,7 +175,7 @@ export const restoreAPI = {
   listVMDKs: (backupId, vmName) => apiClient.get(`/restore/${backupId}/list-vmdks/`, { params: { vm_name: vmName } }),
   getAvailableBackups: (params) => apiClient.get('/restore/available-backups/', { params }),
   getRestoreChain: (backupId) => apiClient.get(`/restore/restore-chain/${backupId}/`),
-  listBackupFiles: (params) => apiClient.get('/restore/list-backup-files/', { params }),
+  listBackupFiles: (params) => apiClient.get('/restore/list_backup_files/', { params }),
   restoreOVF: (serverId, data) => apiClient.post(`/esxi-servers/${serverId}/restore-ovf/`, data),
 }
 
@@ -254,6 +254,52 @@ export const storagePathsAPI = {
   delete: (id) => apiClient.delete(`/storage-paths/${id}/`),
   getActive: () => apiClient.get('/storage-paths/active/'),
   setDefault: (id) => apiClient.post(`/storage-paths/${id}/set_default/`),
+}
+
+// ===========================
+// VM REPLICATION API (Enterprise)
+// ===========================
+export const vmReplicationsAPI = {
+  getAll: (params) => apiClient.get('/vm-replications/', { params }),
+  getById: (id) => apiClient.get(`/vm-replications/${id}/`),
+  create: (data) => apiClient.post('/vm-replications/', data),
+  update: (id, data) => apiClient.put(`/vm-replications/${id}/`, data),
+  patch: (id, data) => apiClient.patch(`/vm-replications/${id}/`, data),
+  delete: (id) => apiClient.delete(`/vm-replications/${id}/`),
+  startReplication: (id) => apiClient.post(`/vm-replications/${id}/start_replication/`),
+  performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/perform_failover/`, data),
+}
+
+// ===========================
+// FAILOVER EVENTS API (Enterprise)
+// ===========================
+export const failoverEventsAPI = {
+  getAll: (params) => apiClient.get('/failover-events/', { params }),
+  getById: (id) => apiClient.get(`/failover-events/${id}/`),
+}
+
+// ===========================
+// BACKUP VERIFICATION API - SureBackup (Enterprise)
+// ===========================
+export const backupVerificationsAPI = {
+  getAll: (params) => apiClient.get('/backup-verifications/', { params }),
+  getById: (id) => apiClient.get(`/backup-verifications/${id}/`),
+  create: (data) => apiClient.post('/backup-verifications/', data),
+  getStatistics: () => apiClient.get('/backup-verifications/statistics/'),
+  startVerification: (id) => apiClient.post(`/backup-verifications/${id}/start_verification/`),
+}
+
+// ===========================
+// VERIFICATION SCHEDULES API (Enterprise)
+// ===========================
+export const verificationSchedulesAPI = {
+  getAll: (params) => apiClient.get('/verification-schedules/', { params }),
+  getById: (id) => apiClient.get(`/verification-schedules/${id}/`),
+  create: (data) => apiClient.post('/verification-schedules/', data),
+  update: (id, data) => apiClient.put(`/verification-schedules/${id}/`, data),
+  patch: (id, data) => apiClient.patch(`/verification-schedules/${id}/`, data),
+  delete: (id) => apiClient.delete(`/verification-schedules/${id}/`),
+  toggleActive: (id) => apiClient.post(`/verification-schedules/${id}/toggle_active/`),
 }
 
 export default apiClient
