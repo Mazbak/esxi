@@ -3,7 +3,7 @@ from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo
 from backups.models import (
     BackupConfiguration, BackupJob, BackupSchedule,
     SnapshotSchedule, Snapshot, RemoteStorageConfig,
-    OVFExportJob, VMBackupJob
+    OVFExportJob, VMBackupJob, StoragePath
 )
 
 class ESXiServerSerializer(serializers.ModelSerializer):
@@ -391,3 +391,34 @@ class VMBackupJobCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Le chemin de backup est requis")
 
         return data
+
+
+# ==========================================================
+# 🔹 STORAGE PATHS - Chemins de sauvegarde
+# ==========================================================
+class StoragePathSerializer(serializers.ModelSerializer):
+    """Serializer pour les chemins de sauvegarde prédéfinis"""
+    
+    storage_type_display = serializers.CharField(source='get_storage_type_display', read_only=True)
+    
+    class Meta:
+        model = StoragePath
+        fields = [
+            'id', 'name', 'path', 'storage_type', 'storage_type_display',
+            'description', 'is_active', 'is_default',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+    
+    def validate_name(self, value):
+        """Valide l'unicité du nom"""
+        instance = self.instance
+        if StoragePath.objects.exclude(pk=instance.pk if instance else None).filter(name=value).exists():
+            raise serializers.ValidationError("Un chemin avec ce nom existe déjà")
+        return value
+    
+    def validate_path(self, value):
+        """Valide le format du chemin"""
+        if not value or value.strip() == '':
+            raise serializers.ValidationError("Le chemin ne peut pas être vide")
+        return value.strip()

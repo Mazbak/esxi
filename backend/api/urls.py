@@ -6,7 +6,7 @@ from .views import (
     SnapshotScheduleViewSet, SnapshotViewSet, RemoteStorageConfigViewSet,
     RestoreViewSet, BackupChainViewSet, DashboardViewSet,
     NotificationConfigViewSet, NotificationLogViewSet, HealthMonitoringViewSet,
-    OVFExportJobViewSet, VMBackupJobViewSet,
+    OVFExportJobViewSet, VMBackupJobViewSet, StoragePathViewSet,
     login_view, logout_view, current_user_view
 )
 
@@ -28,6 +28,7 @@ router.register(r'notification-logs', NotificationLogViewSet, basename='notifica
 router.register(r'health', HealthMonitoringViewSet, basename='health')
 router.register(r'ovf-exports', OVFExportJobViewSet, basename='ovf-exports')
 router.register(r'vm-backups', VMBackupJobViewSet, basename='vm-backups')
+router.register(r'storage-paths', StoragePathViewSet, basename='storage-paths')
 
 urlpatterns = [
     # Authentication endpoints

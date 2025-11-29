@@ -221,7 +221,8 @@ async function loadDatastores() {
     if (selectedServer) {
       // Charger les datastores du serveur sélectionné
       await esxiStore.fetchDatastores({ server: selectedServer.id })
-      datastores.value = esxiStore.datastores || []
+      // Filtrer pour ne garder QUE les datastores du serveur sélectionné
+      datastores.value = (esxiStore.datastores || []).filter(ds => ds.server === selectedServer.id)
     }
   } catch (err) {
     console.error('Erreur chargement datastores:', err)
