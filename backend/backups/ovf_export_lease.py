@@ -551,9 +551,10 @@ class OVFExportLeaseService:
                 ova_size_mb = os.path.getsize(ova_path) / (1024 * 1024)
                 logger.info(f"[OVF-EXPORT] OVA created successfully: {ova_size_mb:.2f} MB")
 
-                # Clean up OVF directory (optional - keep for now for debugging)
-                # shutil.rmtree(export_dir)
-                # logger.info(f"[OVF-EXPORT] Cleaned up OVF directory: {export_dir}")
+                # Clean up OVF directory
+                logger.info(f"[OVF-EXPORT] Cleaning up OVF directory...")
+                shutil.rmtree(export_dir)
+                logger.info(f"[OVF-EXPORT] ✓ OVF directory removed, keeping only OVA file")
 
                 return ova_path
             else:
