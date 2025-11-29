@@ -220,8 +220,8 @@ async function loadDatastores() {
     const selectedServer = servers.value.find(s => s.id === form.esxi_server_id)
     if (selectedServer) {
       // Charger les datastores du serveur sélectionné
-      const response = await esxiStore.fetchDatastores(selectedServer.id)
-      datastores.value = selectedServer.datastores || []
+      await esxiStore.fetchDatastores({ server: selectedServer.id })
+      datastores.value = esxiStore.datastores || []
     }
   } catch (err) {
     console.error('Erreur chargement datastores:', err)
