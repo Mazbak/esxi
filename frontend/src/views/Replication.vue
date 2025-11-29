@@ -335,9 +335,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { vmReplicationsAPI, failoverEventsAPI, virtualMachinesAPI, esxiServersAPI } from '../services/api'
-import { useToast } from 'vue-toastification'
+import { useToastStore } from '@/stores/toast'
 
-const toast = useToast()
+const toast = useToastStore()
 
 const replications = ref([])
 const failoverEvents = ref([])

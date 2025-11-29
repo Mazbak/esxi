@@ -422,9 +422,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { backupVerificationsAPI, verificationSchedulesAPI, virtualMachinesAPI, esxiServersAPI } from '../services/api'
-import { useToast } from 'vue-toastification'
+import { useToastStore } from '@/stores/toast'
 
-const toast = useToast()
+const toast = useToastStore()
 
 const activeTab = ref('verifications')
 const verifications = ref([])
