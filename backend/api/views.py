@@ -1624,6 +1624,82 @@ class RestoreViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=['get'])
+    def list_backup_files(self, request):
+        """
+        Liste les fichiers de sauvegarde OVA/OVF disponibles dans les chemins de stockage
+
+        GET /api/restore/list-backup-files/?path=/backups
+
+        Query params:
+        - path: Chemin à parcourir (optionnel, utilise les chemins de stockage actifs par défaut)
+
+        Returns:
+        [
+            {
+                "name": "vm-backup.ova",
+                "path": "/backups/vm-backup.ova",
+                "size_mb": 1024.5,
+                "type": "ova",
+                "modified": "2025-11-29T10:30:00Z"
+            }
+        ]
+        """
+        import os
+        from datetime import datetime
+        from backups.models import StoragePath
+
+        try:
+            path_param = request.query_params.get('path')
+            backup_files = []
+
+            # Si un chemin spécifique est fourni, l'utiliser
+            if path_param:
+                paths_to_scan = [path_param]
+            else:
+                # Sinon, utiliser tous les chemins de stockage actifs
+                storage_paths = StoragePath.objects.filter(is_active=True)
+                paths_to_scan = [sp.path for sp in storage_paths]
+
+            # Parcourir chaque chemin
+            for base_path in paths_to_scan:
+                if not os.path.exists(base_path):
+                    logger.warning(f"[RESTORE-API] Chemin inexistant: {base_path}")
+                    continue
+
+                # Parcourir récursivement pour trouver les fichiers .ova et .ovf
+                for root, dirs, files in os.walk(base_path):
+                    for filename in files:
+                        if filename.endswith(('.ova', '.ovf')):
+                            file_path = os.path.join(root, filename)
+                            try:
+                                stat_info = os.stat(file_path)
+                                backup_files.append({
+                                    'name': filename,
+                                    'path': file_path,
+                                    'size_mb': round(stat_info.st_size / (1024 * 1024), 2),
+                                    'type': 'ova' if filename.endswith('.ova') else 'ovf',
+                                    'modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+                                    'storage_path': base_path
+                                })
+                            except Exception as e:
+                                logger.error(f"[RESTORE-API] Erreur lecture fichier {file_path}: {e}")
+
+            # Trier par date de modification (plus récent en premier)
+            backup_files.sort(key=lambda x: x['modified'], reverse=True)
+
+            return Response({
+                'files': backup_files,
+                'count': len(backup_files)
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"[RESTORE-API] Erreur listage fichiers: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ==========================================================
 # 🔹 BACKUP CHAIN API

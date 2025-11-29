@@ -96,14 +96,26 @@ class OVFExportService:
             self.export_job.progress_percentage = 85
             self.export_job.save()
 
-            # Step 5: Generate OVF descriptor and manifest (90-100% progress)
-            logger.info(f"[OVF-EXPORT] Step 5/5: Generating OVF descriptor and manifest...")
+            # Step 5: Generate OVF descriptor and manifest (90-95% progress)
+            logger.info(f"[OVF-EXPORT] Step 5/6: Generating OVF descriptor and manifest...")
             self._generate_ovf_files(vmdk_files)
-            self.export_job.progress_percentage = 95
+            self.export_job.progress_percentage = 90
             self.export_job.save()
 
+            # Step 6: Create OVA archive if export_format is 'ova' (95-100% progress)
+            final_path = self.export_job.export_full_path
+            if self.export_job.export_format == 'ova':
+                logger.info(f"[OVF-EXPORT] Step 6/6: Creating OVA archive...")
+                final_path = self._create_ova_archive()
+                # Update export_full_path to point to the OVA file
+                self.export_job.export_full_path = final_path
+                self.export_job.progress_percentage = 95
+                self.export_job.save()
+            else:
+                logger.info(f"[OVF-EXPORT] Step 6/6: Skipping OVA creation (format: {self.export_job.export_format})")
+
             # Calculate total size
-            total_size_mb = self._calculate_directory_size(self.export_job.export_full_path)
+            total_size_mb = self._calculate_directory_size(final_path)
             self.export_job.export_size_mb = total_size_mb
             self.export_job.progress_percentage = 100
             self.export_job.status = 'completed'
@@ -112,8 +124,9 @@ class OVFExportService:
 
             logger.info(f"[OVF-EXPORT] ========================================")
             logger.info(f"[OVF-EXPORT] ✅ Export completed successfully!")
+            logger.info(f"[OVF-EXPORT] Format: {self.export_job.export_format.upper()}")
             logger.info(f"[OVF-EXPORT] Total size: {total_size_mb:.2f} MB")
-            logger.info(f"[OVF-EXPORT] Location: {self.export_job.export_full_path}")
+            logger.info(f"[OVF-EXPORT] Location: {final_path}")
             logger.info(f"[OVF-EXPORT] ========================================")
 
             return True
@@ -499,6 +512,11 @@ class OVFExportService:
 
     def _calculate_directory_size(self, directory):
         """Calculate total directory size in MB"""
+        # Si c'est un fichier (OVA), retourner sa taille directement
+        if os.path.isfile(directory):
+            return os.path.getsize(directory) / (1024 * 1024)
+
+        # Sinon calculer la taille du répertoire
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(directory):
             for filename in filenames:
@@ -507,3 +525,81 @@ class OVFExportService:
                     total_size += os.path.getsize(file_path)
 
         return total_size / (1024 * 1024)
+
+    def _create_ova_archive(self):
+        """
+        Create OVA archive from OVF files
+        OVA is a TAR archive containing the OVF descriptor, manifest, and VMDK files
+
+        Returns:
+            str: Path to the created OVA file
+        """
+        import tarfile
+
+        export_dir = self.export_job.export_full_path
+        ova_filename = f"{self.vm_name}.ova"
+        ova_path = os.path.join(os.path.dirname(export_dir), ova_filename)
+
+        logger.info(f"[OVF-EXPORT] Creating OVA archive: {ova_path}")
+
+        try:
+            # OVA format specification requires specific file order:
+            # 1. .ovf file MUST be first
+            # 2. .mf file (manifest) should be second
+            # 3. .vmdk files follow
+
+            files_to_archive = []
+            ovf_file = None
+            mf_file = None
+            vmdk_files = []
+            other_files = []
+
+            # Scan directory and categorize files
+            for filename in os.listdir(export_dir):
+                file_path = os.path.join(export_dir, filename)
+                if os.path.isfile(file_path):
+                    if filename.endswith('.ovf'):
+                        ovf_file = filename
+                    elif filename.endswith('.mf'):
+                        mf_file = filename
+                    elif filename.endswith('.vmdk'):
+                        vmdk_files.append(filename)
+                    elif not filename.endswith('.json'):  # Skip vm_config.json
+                        other_files.append(filename)
+
+            # Build ordered file list (OVF spec requirement)
+            if ovf_file:
+                files_to_archive.append(ovf_file)
+            if mf_file:
+                files_to_archive.append(mf_file)
+            files_to_archive.extend(sorted(vmdk_files))
+            files_to_archive.extend(sorted(other_files))
+
+            logger.info(f"[OVF-EXPORT] Files to archive ({len(files_to_archive)}):")
+            for f in files_to_archive:
+                logger.info(f"[OVF-EXPORT]   - {f}")
+
+            # Create TAR archive
+            with tarfile.open(ova_path, 'w') as tar:
+                for filename in files_to_archive:
+                    file_path = os.path.join(export_dir, filename)
+                    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    logger.info(f"[OVF-EXPORT] Adding to archive: {filename} ({file_size_mb:.2f} MB)")
+
+                    # Add file to tar with just the filename (no directory structure)
+                    tar.add(file_path, arcname=filename)
+
+            ova_size_mb = os.path.getsize(ova_path) / (1024 * 1024)
+            logger.info(f"[OVF-EXPORT] ✓ OVA archive created: {ova_size_mb:.2f} MB")
+
+            # Clean up the OVF directory (keep only the OVA file)
+            logger.info(f"[OVF-EXPORT] Cleaning up OVF directory...")
+            import shutil
+            shutil.rmtree(export_dir)
+            logger.info(f"[OVF-EXPORT] ✓ OVF directory removed")
+
+            return ova_path
+
+        except Exception as e:
+            logger.error(f"[OVF-EXPORT] Error creating OVA archive: {e}")
+            raise

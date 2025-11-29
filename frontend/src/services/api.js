@@ -175,6 +175,8 @@ export const restoreAPI = {
   listVMDKs: (backupId, vmName) => apiClient.get(`/restore/${backupId}/list-vmdks/`, { params: { vm_name: vmName } }),
   getAvailableBackups: (params) => apiClient.get('/restore/available-backups/', { params }),
   getRestoreChain: (backupId) => apiClient.get(`/restore/restore-chain/${backupId}/`),
+  listBackupFiles: (params) => apiClient.get('/restore/list-backup-files/', { params }),
+  restoreOVF: (serverId, data) => apiClient.post(`/esxi-servers/${serverId}/restore-ovf/`, data),
 }
 
 // ===========================
