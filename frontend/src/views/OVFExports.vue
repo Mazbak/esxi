@@ -225,6 +225,26 @@
 
         <div>
           <label class="label">Emplacement de sauvegarde</label>
+
+          <!-- Sélecteur de chemins prédéfinis -->
+          <div v-if="storagePaths.length > 0" class="mb-2">
+            <select
+              @change="selectStoragePath"
+              class="input-field text-sm"
+              :disabled="creating"
+            >
+              <option value="">📁 Choisir un chemin prédéfini...</option>
+              <option
+                v-for="path in storagePaths"
+                :key="path.id"
+                :value="path.path"
+              >
+                {{ path.name }} - {{ path.path }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Champ manuel -->
           <input
             v-model="form.export_location"
             type="text"
@@ -234,6 +254,7 @@
             placeholder="/mnt/backups ou /mnt/smb-share ou \\serveur\partage"
           />
           <p class="mt-1 text-sm text-gray-500">
+            <span v-if="storagePaths.length > 0">Sélectionnez un chemin prédéfini ou saisissez manuellement. </span>
             Disque monté, partage SMB, disque iSCSI, NFS, ou tout chemin accessible
           </p>
         </div>
@@ -275,6 +296,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useVMOperationsStore } from '@/stores/vmOperations'
 import { useEsxiStore } from '@/stores/esxi'
 import { useToastStore } from '@/stores/toast'
+import { storagePathsAPI } from '@/services/api'
 import Modal from '@/components/common/Modal.vue'
 
 const vmOpsStore = useVMOperationsStore()
@@ -283,6 +305,7 @@ const toast = useToastStore()
 
 const showCreateModal = ref(false)
 const creating = ref(false)  // Local loading state for modal
+const storagePaths = ref([])  // Chemins de sauvegarde prédéfinis
 const form = ref({
   virtual_machine: '',
   export_format: 'ova',  // OVA par défaut (recommandé)
@@ -349,6 +372,7 @@ function stopStatusCheck() {
 onMounted(async () => {
   await vmOpsStore.fetchOVFExports()
   await esxiStore.fetchVirtualMachines()
+  await loadStoragePaths()  // Charger les chemins de sauvegarde prédéfinis
 
   // Démarrer le polling de progression réelle si il y a des exports actifs
   if (hasActiveExports.value) {
@@ -443,6 +467,33 @@ function getProgressBarClass(status) {
     'cancelled': 'bg-gray-500'
   }
   return classes[status] || 'bg-gray-500'
+}
+
+// Charger les chemins de sauvegarde prédéfinis (actifs uniquement)
+async function loadStoragePaths() {
+  try {
+    const response = await storagePathsAPI.getActive()
+    storagePaths.value = response.data
+
+    // Si un chemin par défaut existe, le pré-sélectionner
+    const defaultPath = storagePaths.value.find(p => p.is_default)
+    if (defaultPath) {
+      form.value.export_location = defaultPath.path
+    }
+  } catch (err) {
+    console.error('Erreur chargement chemins:', err)
+    // Pas d'erreur toast, c'est optionnel
+  }
+}
+
+// Sélectionner un chemin prédéfini
+function selectStoragePath(event) {
+  const selectedPath = event.target.value
+  if (selectedPath) {
+    form.value.export_location = selectedPath
+  }
+  // Reset le select après sélection
+  event.target.value = ''
 }
 
 function formatSize(sizeMb) {

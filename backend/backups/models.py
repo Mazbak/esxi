@@ -1079,3 +1079,70 @@ class NotificationLog(models.Model):
 
     def __str__(self):
         return f"{self.event_type} - {self.status} - {self.sent_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+# ==========================================================
+# 🔹 STORAGE PATHS - Chemins de sauvegarde prédéfinis
+# ==========================================================
+class StoragePath(models.Model):
+    """
+    Chemins de sauvegarde prédéfinis configurables dans les paramètres
+    Utilisables pour sauvegardes et restaurations dans toute l'application
+    """
+    STORAGE_TYPE_CHOICES = [
+        ('local', 'Disque local'),
+        ('smb', 'Partage SMB/CIFS'),
+        ('nfs', 'Partage NFS'),
+        ('iscsi', 'Disque iSCSI'),
+        ('other', 'Autre')
+    ]
+
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Nom descriptif du chemin (ex: 'NAS Principal', 'Backup Mensuel')"
+    )
+
+    path = models.CharField(
+        max_length=500,
+        help_text="Chemin complet (ex: /mnt/backups, \\\\serveur\\partage, /mnt/nfs-share)"
+    )
+
+    storage_type = models.CharField(
+        max_length=20,
+        choices=STORAGE_TYPE_CHOICES,
+        default='local',
+        help_text="Type de stockage"
+    )
+
+    description = models.TextField(
+        blank=True,
+        help_text="Description optionnelle du chemin de sauvegarde"
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Chemin actif et utilisable"
+    )
+
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Chemin par défaut proposé dans les formulaires"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Chemin de sauvegarde"
+        verbose_name_plural = "Chemins de sauvegarde"
+        ordering = ['-is_default', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.path})"
+
+    def save(self, *args, **kwargs):
+        # Si ce chemin est défini comme défaut, retirer le défaut des autres
+        if self.is_default:
+            StoragePath.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)

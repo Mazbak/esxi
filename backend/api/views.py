@@ -20,7 +20,8 @@ from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo
 from backups.models import (
     BackupConfiguration, BackupJob, BackupLog,
     BackupSchedule, SnapshotSchedule, Snapshot,
-    RemoteStorageConfig, NotificationConfig, NotificationLog
+    RemoteStorageConfig, NotificationConfig, NotificationLog,
+    StoragePath
 )
 from esxi.vmware_service import VMwareService
 from backups.backup_service import BackupService
@@ -34,7 +35,8 @@ from api.serializers import (
     RemoteStorageConfigCreateSerializer, RemoteStorageTestSerializer,
     RestoreVMSerializer, RestoreVMDKSerializer, FileRecoverySerializer,
     ListFilesSerializer, SearchFilesSerializer, ValidateRestoreSerializer,
-    NotificationConfigSerializer, NotificationLogSerializer, TestNotificationSerializer
+    NotificationConfigSerializer, NotificationLogSerializer, TestNotificationSerializer,
+    StoragePathSerializer
 )
 from backups.tasks import execute_backup_job  # Celery task
 
@@ -2266,4 +2268,39 @@ class VMBackupJobViewSet(viewsets.ModelViewSet):
 
         from api.serializers import VMBackupJobSerializer
         serializer = VMBackupJobSerializer(base_backups, many=True)
+        return Response(serializer.data)
+
+
+# ==========================================================
+# 🔹 STORAGE PATHS - Chemins de sauvegarde
+# ==========================================================
+class StoragePathViewSet(viewsets.ModelViewSet):
+    """Gestion des chemins de sauvegarde prédéfinis"""
+    queryset = StoragePath.objects.all()
+    serializer_class = StoragePathSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['is_active', 'storage_type', 'is_default']
+    ordering_fields = ['name', 'created_at', 'is_default']
+    ordering = ['-is_default', 'name']
+    
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        """Définir ce chemin comme défaut"""
+        storage_path = self.get_object()
+        
+        # Retirer le défaut des autres
+        StoragePath.objects.exclude(pk=pk).update(is_default=False)
+        
+        # Définir celui-ci comme défaut
+        storage_path.is_default = True
+        storage_path.save()
+        
+        serializer = self.get_serializer(storage_path)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        """Retourne uniquement les chemins actifs"""
+        active_paths = self.queryset.filter(is_active=True)
+        serializer = self.get_serializer(active_paths, many=True)
         return Response(serializer.data)

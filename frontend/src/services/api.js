@@ -240,4 +240,18 @@ export const vmBackupsAPI = {
   getAvailableBaseBackups: (vmId) => apiClient.get('/vm-backups/available_base_backups/', { params: { vm_id: vmId } }),
 }
 
+// ===========================
+// STORAGE PATHS API
+// ===========================
+export const storagePathsAPI = {
+  getAll: (params) => apiClient.get('/storage-paths/', { params }),
+  getById: (id) => apiClient.get(`/storage-paths/${id}/`),
+  create: (data) => apiClient.post('/storage-paths/', data),
+  update: (id, data) => apiClient.put(`/storage-paths/${id}/`, data),
+  patch: (id, data) => apiClient.patch(`/storage-paths/${id}/`, data),
+  delete: (id) => apiClient.delete(`/storage-paths/${id}/`),
+  getActive: () => apiClient.get('/storage-paths/active/'),
+  setDefault: (id) => apiClient.post(`/storage-paths/${id}/set_default/`),
+}
+
 export default apiClient
