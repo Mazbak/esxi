@@ -3,14 +3,14 @@
     <!-- Page Header -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">📦 Export OVF</h1>
-        <p class="mt-1 text-sm text-gray-500">Exporter vos VMs au format OVF standard pour migration ou archivage</p>
+        <h1 class="text-2xl font-bold text-gray-900">💾 Sauvegardes</h1>
+        <p class="mt-1 text-sm text-gray-500">Sauvegarder vos VMs (espace occupé uniquement + configuration complète)</p>
       </div>
       <button
         @click="showCreateModal = true"
         class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
       >
-        ➕ Nouvel Export
+        ➕ Nouvelle Sauvegarde
       </button>
     </div>
 
@@ -19,7 +19,7 @@
       <div class="bg-white rounded-lg shadow p-6">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-sm text-gray-500">Total Exports</p>
+            <p class="text-sm text-gray-500">Total Sauvegardes</p>
             <p class="text-2xl font-bold text-gray-900">{{ stats.total }}</p>
           </div>
           <div class="p-3 bg-blue-100 rounded-full">
@@ -76,7 +76,7 @@
     <!-- Exports List -->
     <div class="bg-white shadow rounded-lg overflow-hidden">
       <div class="px-6 py-4 border-b border-gray-200">
-        <h3 class="text-lg font-semibold text-gray-900">Exports OVF</h3>
+        <h3 class="text-lg font-semibold text-gray-900">Sauvegardes</h3>
       </div>
 
       <div class="overflow-x-auto">
@@ -102,7 +102,7 @@
             </tr>
             <tr v-else-if="exportsWithProgress.length === 0">
               <td colspan="7" class="px-6 py-4 text-center text-gray-500">
-                Aucun export OVF
+                Aucune sauvegarde
               </td>
             </tr>
             <tr v-else v-for="exportJob in exportsWithProgress" :key="exportJob.id" class="hover:bg-gray-50">
@@ -180,7 +180,7 @@
     </div>
 
     <!-- Create Export Modal -->
-    <Modal :show="showCreateModal" title="Créer un Export OVF" @close="showCreateModal = false">
+    <Modal :show="showCreateModal" title="Créer une Sauvegarde" @close="showCreateModal = false">
       <form @submit.prevent="handleCreate" class="space-y-4">
         <div>
           <label class="label">Machine virtuelle</label>
@@ -340,7 +340,7 @@ async function handleCreate() {
     // Notification de succès
     const selectedVM = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
     const vmName = selectedVM ? selectedVM.name : 'VM'
-    toast.success(`🚀 Export OVF de "${vmName}" démarré avec succès ! Suivez la progression ci-dessous.`, 5000)
+    toast.success(`💾 Sauvegarde de "${vmName}" démarrée avec succès ! Suivez la progression ci-dessous.`, 5000)
 
     // Reset form
     form.value = { virtual_machine: '', export_location: '/mnt/exports' }

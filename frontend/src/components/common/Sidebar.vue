@@ -121,13 +121,8 @@ const navigation = [
   },
   {
     name: 'Sauvegardes',
-    path: '/backups',
-    icon: 'IconBackup'
-  },
-  {
-    name: 'Export OVF',
     path: '/ovf-exports',
-    icon: 'IconExport'
+    icon: 'IconBackup'
   },
   {
     name: 'Snapshots',
