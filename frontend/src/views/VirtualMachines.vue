@@ -120,7 +120,7 @@
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                 <router-link
-                  :to="`/backups?vm=${vm.id}`"
+                  :to="`/ovf-exports?vm=${vm.id}`"
                   class="text-primary-600 hover:text-primary-900 mr-3"
                 >
                   Sauvegarder

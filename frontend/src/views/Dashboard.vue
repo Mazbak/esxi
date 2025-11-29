@@ -105,7 +105,7 @@
       <h3 class="text-lg font-semibold text-gray-900 mb-4">Actions rapides</h3>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <router-link
-          to="/backups"
+          to="/ovf-exports"
           class="flex items-center p-4 border-2 border-gray-200 rounded-lg hover:border-primary-500 hover:bg-primary-50 transition-all"
         >
           <div class="p-3 bg-primary-100 rounded-lg mr-4">
