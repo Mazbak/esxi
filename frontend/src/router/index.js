@@ -31,11 +31,6 @@ const router = createRouter({
           component: () => import('@/views/VirtualMachines.vue'),
         },
         {
-          path: 'backups',
-          name: 'backups',
-          component: () => import('@/views/Backups.vue'),
-        },
-        {
           path: 'ovf-exports',
           name: 'ovf-exports',
           component: () => import('@/views/OVFExports.vue'),
