@@ -16,6 +16,24 @@
         <!-- Fichier OVF/OVA -->
         <div>
           <label class="label">Fichier de sauvegarde (OVF ou OVA)</label>
+
+          <!-- Sélecteur de chemins prédéfinis -->
+          <div v-if="storagePaths.length > 0" class="mb-2">
+            <select
+              @change="selectStoragePath"
+              class="input-field text-sm"
+            >
+              <option value="">📁 Répertoire de sauvegarde prédéfini...</option>
+              <option
+                v-for="path in storagePaths"
+                :key="path.id"
+                :value="path.path"
+              >
+                {{ path.name }} - {{ path.path }}
+              </option>
+            </select>
+          </div>
+
           <input
             v-model="form.ovf_path"
             type="text"
@@ -24,7 +42,8 @@
             placeholder="/backups/ma-vm.ova ou /backups/ma-vm/ma-vm.ovf"
           />
           <p class="mt-1 text-sm text-gray-500">
-            Chemin complet vers le fichier .ova ou .ovf à restaurer
+            <span v-if="storagePaths.length > 0">Sélectionnez un répertoire prédéfini puis complétez le nom du fichier, ou </span>
+            saisissez le chemin complet vers le fichier .ova ou .ovf à restaurer
           </p>
         </div>
 
@@ -185,7 +204,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useEsxiStore } from '@/stores/esxi'
 import { useToastStore } from '@/stores/toast'
-import { restoreAPI } from '@/services/api'
+import { restoreAPI, storagePathsAPI } from '@/services/api'
 
 const esxiStore = useEsxiStore()
 const toast = useToastStore()
@@ -194,6 +213,7 @@ const loading = ref(false)
 const error = ref(null)
 const success = ref(null)
 const datastores = ref([])
+const storagePaths = ref([])  // Chemins de sauvegarde prédéfinis
 
 const form = reactive({
   ovf_path: '',
@@ -211,6 +231,8 @@ onMounted(async () => {
   if (servers.value.length === 0) {
     await esxiStore.fetchServers()
   }
+  // Charger les chemins de sauvegarde prédéfinis
+  await loadStoragePaths()
 })
 
 async function loadDatastores() {
@@ -280,6 +302,34 @@ function resetForm() {
   error.value = null
   success.value = null
   datastores.value = []
+}
+
+// Charger les chemins de sauvegarde prédéfinis (actifs uniquement)
+async function loadStoragePaths() {
+  try {
+    const response = await storagePathsAPI.getActive()
+    storagePaths.value = response.data
+
+    // Si un chemin par défaut existe, le pré-remplir
+    const defaultPath = storagePaths.value.find(p => p.is_default)
+    if (defaultPath) {
+      form.ovf_path = defaultPath.path + '/'
+    }
+  } catch (err) {
+    console.error('Erreur chargement chemins:', err)
+    // Pas d'erreur toast, c'est optionnel
+  }
+}
+
+// Sélectionner un chemin prédéfini
+function selectStoragePath(event) {
+  const selectedPath = event.target.value
+  if (selectedPath) {
+    // Ajouter un slash à la fin si pas déjà présent
+    form.ovf_path = selectedPath.endsWith('/') ? selectedPath : selectedPath + '/'
+  }
+  // Reset le select après sélection
+  event.target.value = ''
 }
 
 function formatSize(bytes) {
