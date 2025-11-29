@@ -384,23 +384,30 @@ class OVFExportJob(models.Model):
     def delete(self, *args, **kwargs):
         """
         Override delete to also remove export files from disk
+        Handles both OVF directories and OVA files
         """
         import shutil
         import logging
         logger = logging.getLogger(__name__)
 
-        # Delete export directory if it exists
+        # Delete export directory/file if it exists
         if self.export_full_path:
             try:
                 import os
                 if os.path.exists(self.export_full_path):
-                    logger.info(f"[OVF-EXPORT] Suppression du répertoire d'export: {self.export_full_path}")
-                    shutil.rmtree(self.export_full_path)
-                    logger.info(f"[OVF-EXPORT] Répertoire d'export supprimé avec succès")
+                    # Check if it's a file (OVA) or directory (OVF)
+                    if os.path.isfile(self.export_full_path):
+                        logger.info(f"[OVF-EXPORT] Suppression du fichier OVA: {self.export_full_path}")
+                        os.remove(self.export_full_path)
+                        logger.info(f"[OVF-EXPORT] Fichier OVA supprimé avec succès")
+                    else:
+                        logger.info(f"[OVF-EXPORT] Suppression du répertoire OVF: {self.export_full_path}")
+                        shutil.rmtree(self.export_full_path)
+                        logger.info(f"[OVF-EXPORT] Répertoire OVF supprimé avec succès")
                 else:
-                    logger.warning(f"[OVF-EXPORT] Répertoire d'export introuvable: {self.export_full_path}")
+                    logger.warning(f"[OVF-EXPORT] Fichier/répertoire d'export introuvable: {self.export_full_path}")
             except Exception as e:
-                logger.error(f"[OVF-EXPORT] Erreur lors de la suppression du répertoire: {e}")
+                logger.error(f"[OVF-EXPORT] Erreur lors de la suppression: {e}")
                 # Continue with database deletion even if file deletion fails
 
         # Call parent delete to remove from database

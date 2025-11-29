@@ -34,15 +34,27 @@
             </select>
           </div>
 
-          <input
-            v-model="form.ovf_path"
-            type="text"
-            required
-            class="input-field"
-            placeholder="/backups/ma-vm.ova ou /backups/ma-vm/ma-vm.ovf"
-          />
+          <div class="flex gap-2">
+            <input
+              v-model="form.ovf_path"
+              type="text"
+              required
+              class="input-field flex-1"
+              placeholder="/backups/ma-vm.ova ou /backups/ma-vm/ma-vm.ovf"
+            />
+            <button
+              type="button"
+              @click="openFileBrowser"
+              class="btn-secondary flex items-center gap-2 whitespace-nowrap"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              Parcourir
+            </button>
+          </div>
           <p class="mt-1 text-sm text-gray-500">
-            <span v-if="storagePaths.length > 0">Sélectionnez un répertoire prédéfini puis complétez le nom du fichier, ou </span>
+            <span v-if="storagePaths.length > 0">Sélectionnez un répertoire prédéfini, cliquez sur "Parcourir" pour choisir un fichier, ou </span>
             saisissez le chemin complet vers le fichier .ova ou .ovf à restaurer
           </p>
         </div>
@@ -197,6 +209,105 @@
         </div>
       </div>
     </div>
+
+    <!-- File Browser Modal -->
+    <div v-if="showFileBrowser" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
+        <!-- Header -->
+        <div class="flex items-center justify-between p-6 border-b">
+          <h3 class="text-lg font-semibold text-gray-900">📁 Parcourir les sauvegardes</h3>
+          <button
+            @click="closeFileBrowser"
+            class="text-gray-400 hover:text-gray-600"
+          >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Content -->
+        <div class="flex-1 overflow-y-auto p-6">
+          <div v-if="loadingFiles" class="flex items-center justify-center py-12">
+            <svg class="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="ml-3 text-gray-600">Chargement des fichiers...</span>
+          </div>
+
+          <div v-else-if="backupFiles.length === 0" class="text-center py-12">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p class="mt-4 text-gray-500">Aucun fichier de sauvegarde trouvé</p>
+            <p class="mt-2 text-sm text-gray-400">Vérifiez que les chemins de stockage sont configurés</p>
+          </div>
+
+          <div v-else class="space-y-2">
+            <div
+              v-for="file in backupFiles"
+              :key="file.path"
+              @click="selectBackupFile(file)"
+              class="flex items-center justify-between p-4 border rounded-lg hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition"
+              :class="{ 'bg-blue-50 border-blue-300': form.ovf_path === file.path }"
+            >
+              <div class="flex items-center flex-1">
+                <div class="flex-shrink-0">
+                  <svg class="w-8 h-8" :class="file.type === 'ova' ? 'text-blue-600' : 'text-green-600'" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd" />
+                  </svg>
+                </div>
+                <div class="ml-4 flex-1">
+                  <p class="text-sm font-medium text-gray-900">{{ file.name }}</p>
+                  <p class="text-xs text-gray-500 mt-1">{{ file.path }}</p>
+                  <div class="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                    <span class="flex items-center">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium mr-2"
+                        :class="file.type === 'ova' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'">
+                        {{ file.type.toUpperCase() }}
+                      </span>
+                    </span>
+                    <span>{{ file.size_mb.toFixed(2) }} MB</span>
+                    <span>{{ formatDate(file.modified) }}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="form.ovf_path === file.path" class="flex-shrink-0 ml-4">
+                <svg class="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex items-center justify-between p-6 border-t bg-gray-50">
+          <p class="text-sm text-gray-600">
+            {{ backupFiles.length }} fichier(s) trouvé(s)
+          </p>
+          <div class="flex gap-3">
+            <button
+              type="button"
+              @click="closeFileBrowser"
+              class="btn-secondary"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              @click="confirmFileSelection"
+              :disabled="!form.ovf_path"
+              class="btn-primary"
+              :class="{ 'opacity-50 cursor-not-allowed': !form.ovf_path }"
+            >
+              Sélectionner
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -214,6 +325,9 @@ const error = ref(null)
 const success = ref(null)
 const datastores = ref([])
 const storagePaths = ref([])  // Chemins de sauvegarde prédéfinis
+const showFileBrowser = ref(false)
+const loadingFiles = ref(false)
+const backupFiles = ref([])
 
 const form = reactive({
   ovf_path: '',
@@ -336,5 +450,51 @@ function formatSize(bytes) {
   if (!bytes) return '0 GB'
   const gb = bytes / (1024 ** 3)
   return `${gb.toFixed(2)} GB`
+}
+
+// Navigateur de fichiers
+async function openFileBrowser() {
+  showFileBrowser.value = true
+  loadingFiles.value = true
+  backupFiles.value = []
+
+  try {
+    const response = await restoreAPI.listBackupFiles()
+    backupFiles.value = response.data.files || []
+  } catch (err) {
+    console.error('Erreur chargement fichiers:', err)
+    toast.error('Erreur lors du chargement des fichiers de sauvegarde')
+  } finally {
+    loadingFiles.value = false
+  }
+}
+
+function closeFileBrowser() {
+  showFileBrowser.value = false
+}
+
+function selectBackupFile(file) {
+  form.ovf_path = file.path
+  // Extraire le nom de la VM du nom du fichier (sans l'extension)
+  if (!form.vm_name) {
+    const nameWithoutExt = file.name.replace(/\.(ova|ovf)$/, '')
+    form.vm_name = nameWithoutExt
+  }
+}
+
+function confirmFileSelection() {
+  closeFileBrowser()
+  toast.success('Fichier sélectionné avec succès')
+}
+
+function formatDate(dateString) {
+  const date = new Date(dateString)
+  return date.toLocaleDateString('fr-FR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
 }
 </script>
