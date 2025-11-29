@@ -177,7 +177,8 @@ class RemoteStorageConfig(models.Model):
             # Format Windows UNC: \\host\share\path
             path = f"\\\\{self.host}\\{self.share_name}"
             if self.base_path:
-                path = f"{path}\\{self.base_path.replace('/', '\\')}"
+                base_path_win = self.base_path.replace('/', '\\')
+                path = f"{path}\\{base_path_win}"
             return path
         elif self.protocol == 'nfs':
             # Format NFS: /mnt/nfs_mount/path

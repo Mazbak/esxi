@@ -1057,7 +1057,7 @@ class RemoteStorageConfigViewSet(viewsets.ModelViewSet):
 # 🔹 RESTORATION API
 # ==========================================================
 
-class RestoreViewSet(viewsets.GenericViewSet):
+class RestoreViewSet(viewsets.ViewSet):
     """
     ViewSet pour les opérations de restauration
 
