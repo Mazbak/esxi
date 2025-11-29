@@ -324,8 +324,8 @@ class BackupJob(models.Model):
 
 class OVFExportJob(models.Model):
     """
-    Export OVF - Pour migration/archivage de VMs
-    Exporte la VM au format OVF standard VMware
+    Export OVF/OVA - Pour migration/archivage de VMs
+    Exporte la VM au format OVF (multi-fichiers) ou OVA (archive unique)
     """
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -335,7 +335,20 @@ class OVFExportJob(models.Model):
         ('cancelled', 'Cancelled')
     ]
 
+    EXPORT_FORMAT_CHOICES = [
+        ('ovf', 'OVF (Multi-fichiers)'),
+        ('ova', 'OVA (Archive unique - Recommandé)')
+    ]
+
     virtual_machine = models.ForeignKey(VirtualMachine, on_delete=models.CASCADE, related_name='ovf_exports')
+
+    # Format d'export (OVF ou OVA)
+    export_format = models.CharField(
+        max_length=10,
+        choices=EXPORT_FORMAT_CHOICES,
+        default='ova',
+        help_text="OVA (recommandé): archive unique. OVF: multi-fichiers."
+    )
 
     # Stockage distant
     remote_storage = models.ForeignKey(

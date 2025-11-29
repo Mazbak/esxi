@@ -243,6 +243,21 @@ class OVFExportLeaseService:
             logger.info(f"[OVF-EXPORT] Files exported: {len(downloaded_files)}")
             logger.info(f"[OVF-EXPORT] Location: {export_dir}")
 
+            # Step 5: Convert to OVA if requested
+            if hasattr(self.export_job, 'export_format') and self.export_job.export_format == 'ova':
+                logger.info(f"[OVF-EXPORT] Step 5/5: Converting to OVA format...")
+                self.export_job.progress_percentage = 99
+                self.export_job.save()
+
+                ova_path = self._convert_to_ova(export_dir, downloaded_files)
+                if ova_path:
+                    logger.info(f"[OVF-EXPORT] OVA created: {ova_path}")
+                    # Update export path to point to OVA file
+                    self.export_job.export_full_path = ova_path
+                    ova_size_mb = os.path.getsize(ova_path) / (1024 * 1024)
+                    self.export_job.export_size_mb = ova_size_mb
+                    logger.info(f"[OVF-EXPORT] OVA size: {ova_size_mb:.2f} MB")
+
             # Validation: Compare estimated vs actual size
             if estimated_total_bytes > 0:
                 actual_gb = actual_total_bytes / (1024**3)
@@ -472,6 +487,82 @@ class OVFExportLeaseService:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
+
+    def _convert_to_ova(self, export_dir, downloaded_files):
+        """
+        Convert OVF directory to OVA (tar archive)
+
+        Args:
+            export_dir: Directory containing OVF files
+            downloaded_files: List of downloaded file info
+
+        Returns:
+            str: Path to created OVA file, or None if failed
+        """
+        import tarfile
+        import shutil
+
+        try:
+            # OVA file path (same location as export_dir, but with .ova extension)
+            parent_dir = os.path.dirname(export_dir)
+            ova_filename = f"{self.vm_name}.ova"
+            ova_path = os.path.join(parent_dir, ova_filename)
+
+            logger.info(f"[OVF-EXPORT] Creating OVA archive: {ova_path}")
+
+            # Create tar archive
+            # Note: OVA is a tar file (not tar.gz) according to OVF specification
+            with tarfile.open(ova_path, 'w') as tar:
+                # OVA spec requires files in specific order:
+                # 1. .ovf file first
+                # 2. .mf file (if exists)
+                # 3. all other files (.vmdk, etc.)
+
+                # Sort files: .ovf first, then .mf, then others
+                ovf_files = [f for f in downloaded_files if f['filename'].endswith('.ovf')]
+                mf_files = [f for f in downloaded_files if f['filename'].endswith('.mf')]
+                other_files = [f for f in downloaded_files if not f['filename'].endswith(('.ovf', '.mf'))]
+
+                # Also check for .mf file in export_dir (generated separately)
+                mf_path = os.path.join(export_dir, f"{self.vm_name}.mf")
+                if os.path.exists(mf_path) and not any(f['filename'].endswith('.mf') for f in mf_files):
+                    mf_files.append({
+                        'filename': f"{self.vm_name}.mf",
+                        'path': mf_path,
+                        'size_mb': os.path.getsize(mf_path) / (1024 * 1024)
+                    })
+
+                ordered_files = ovf_files + mf_files + other_files
+
+                # Add files to tar in correct order
+                for file_info in ordered_files:
+                    filepath = file_info['path']
+                    filename = file_info['filename']
+
+                    if os.path.exists(filepath):
+                        logger.info(f"[OVF-EXPORT] Adding to OVA: {filename}")
+                        # Add file to tar with just the filename (no directory structure)
+                        tar.add(filepath, arcname=filename)
+                    else:
+                        logger.warning(f"[OVF-EXPORT] File not found, skipping: {filepath}")
+
+            # Verify OVA was created
+            if os.path.exists(ova_path):
+                ova_size_mb = os.path.getsize(ova_path) / (1024 * 1024)
+                logger.info(f"[OVF-EXPORT] OVA created successfully: {ova_size_mb:.2f} MB")
+
+                # Clean up OVF directory (optional - keep for now for debugging)
+                # shutil.rmtree(export_dir)
+                # logger.info(f"[OVF-EXPORT] Cleaned up OVF directory: {export_dir}")
+
+                return ova_path
+            else:
+                logger.error(f"[OVF-EXPORT] OVA file was not created")
+                return None
+
+        except Exception as e:
+            logger.error(f"[OVF-EXPORT] Error converting to OVA: {e}", exc_info=True)
+            return None
 
 
 def execute_ovf_export(vm_obj, export_job):

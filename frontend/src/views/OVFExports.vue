@@ -192,6 +192,37 @@
           </select>
         </div>
 
+        <!-- Format d'export (OVF ou OVA) -->
+        <div class="border-2 rounded-lg p-4" :class="form.export_format === 'ova' ? 'border-green-500 bg-green-50' : 'border-gray-300'">
+          <label class="label flex items-center">
+            <svg class="w-5 h-5 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            Format de sauvegarde
+          </label>
+          <select v-model="form.export_format" required class="input-field mt-2" :disabled="creating">
+            <option value="ova">✅ OVA - Archive unique (Recommandé)</option>
+            <option value="ovf">📁 OVF - Multi-fichiers</option>
+          </select>
+          <div v-if="form.export_format === 'ova'" class="mt-2 p-3 bg-green-100 rounded-lg">
+            <p class="text-sm text-green-800 font-medium">✅ Format OVA (Recommandé)</p>
+            <ul class="mt-1 text-xs text-green-700 list-disc list-inside space-y-1">
+              <li>Fichier unique (.ova) - facile à transférer</li>
+              <li>Plus compact (archive TAR)</li>
+              <li>Compatible tous outils VMware</li>
+              <li>Idéal pour archivage et migration</li>
+            </ul>
+          </div>
+          <div v-else class="mt-2 p-3 bg-blue-100 rounded-lg">
+            <p class="text-sm text-blue-800 font-medium">📁 Format OVF</p>
+            <ul class="mt-1 text-xs text-blue-700 list-disc list-inside space-y-1">
+              <li>Plusieurs fichiers (.ovf, .vmdk, .mf)</li>
+              <li>Permet modification avant import</li>
+              <li>Utile pour personnalisation avancée</li>
+            </ul>
+          </div>
+        </div>
+
         <div>
           <label class="label">Emplacement d'export</label>
           <input
@@ -203,7 +234,7 @@
             placeholder="/mnt/exports ou D:\exports"
           />
           <p class="mt-1 text-sm text-gray-500">
-            Chemin où l'export OVF sera sauvegardé
+            Chemin où la sauvegarde sera stockée
           </p>
         </div>
 
@@ -254,6 +285,7 @@ const showCreateModal = ref(false)
 const creating = ref(false)  // Local loading state for modal
 const form = ref({
   virtual_machine: '',
+  export_format: 'ova',  // OVA par défaut (recommandé)
   export_location: '/mnt/exports'
 })
 
@@ -343,7 +375,7 @@ async function handleCreate() {
     toast.success(`💾 Sauvegarde de "${vmName}" démarrée avec succès ! Suivez la progression ci-dessous.`, 5000)
 
     // Reset form
-    form.value = { virtual_machine: '', export_location: '/mnt/exports' }
+    form.value = { virtual_machine: '', export_format: 'ova', export_location: '/mnt/exports' }
 
     // Rafraîchir la liste pour obtenir le nouvel export
     await vmOpsStore.fetchOVFExports()

@@ -304,7 +304,7 @@ class TestNotificationSerializer(serializers.Serializer):
 # ============================================================
 
 class OVFExportJobSerializer(serializers.ModelSerializer):
-    """Serializer pour les exports OVF"""
+    """Serializer pour les exports OVF/OVA"""
     vm_name = serializers.CharField(source='virtual_machine.name', read_only=True)
     remote_storage_name = serializers.CharField(source='remote_storage.name', read_only=True, allow_null=True)
 
@@ -312,7 +312,7 @@ class OVFExportJobSerializer(serializers.ModelSerializer):
         model = OVFExportJob
         fields = [
             'id', 'virtual_machine', 'vm_name', 'remote_storage', 'remote_storage_name',
-            'export_location', 'export_full_path', 'export_size_mb',
+            'export_format', 'export_location', 'export_full_path', 'export_size_mb',
             'downloaded_bytes', 'total_bytes', 'download_speed_mbps',
             'status', 'progress_percentage', 'error_message',
             'created_by', 'created_at', 'started_at', 'completed_at', 'duration_seconds'
@@ -323,15 +323,21 @@ class OVFExportJobSerializer(serializers.ModelSerializer):
 
 
 class OVFExportJobCreateSerializer(serializers.ModelSerializer):
-    """Serializer pour créer un export OVF"""
+    """Serializer pour créer un export OVF/OVA"""
     class Meta:
         model = OVFExportJob
-        fields = ['virtual_machine', 'remote_storage', 'export_location']
+        fields = ['virtual_machine', 'remote_storage', 'export_location', 'export_format']
 
     def validate(self, data):
         """Valide les données d'export"""
         if not data.get('export_location'):
             raise serializers.ValidationError("Le chemin d'export est requis")
+
+        # Valider export_format
+        export_format = data.get('export_format', 'ova')
+        if export_format not in ['ovf', 'ova']:
+            raise serializers.ValidationError("Format d'export invalide. Utilisez 'ovf' ou 'ova'.")
+
         return data
 
 
