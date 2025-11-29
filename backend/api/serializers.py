@@ -3,7 +3,8 @@ from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo
 from backups.models import (
     BackupConfiguration, BackupJob, BackupSchedule,
     SnapshotSchedule, Snapshot, RemoteStorageConfig,
-    OVFExportJob, VMBackupJob, StoragePath
+    OVFExportJob, VMBackupJob, StoragePath,
+    VMReplication, FailoverEvent, BackupVerification, BackupVerificationSchedule
 )
 
 class ESXiServerSerializer(serializers.ModelSerializer):
@@ -422,3 +423,103 @@ class StoragePathSerializer(serializers.ModelSerializer):
         if not value or value.strip() == '':
             raise serializers.ValidationError("Le chemin ne peut pas être vide")
         return value.strip()
+
+
+# ==========================================================
+# 🔹 VM REPLICATION - Réplication de VMs
+# ==========================================================
+class VMReplicationSerializer(serializers.ModelSerializer):
+    """Serializer pour la réplication de VMs"""
+    
+    vm_name = serializers.CharField(source='virtual_machine.name', read_only=True)
+    source_server_name = serializers.CharField(source='source_server.name', read_only=True)
+    destination_server_name = serializers.CharField(source='destination_server.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    failover_mode_display = serializers.CharField(source='get_failover_mode_display', read_only=True)
+    
+    class Meta:
+        model = VMReplication
+        fields = [
+            'id', 'name', 'virtual_machine', 'vm_name',
+            'source_server', 'source_server_name',
+            'destination_server', 'destination_server_name',
+            'destination_datastore', 'replication_interval_minutes',
+            'status', 'status_display', 'failover_mode', 'failover_mode_display',
+            'auto_failover_threshold_minutes', 'last_replication_at',
+            'last_replication_duration_seconds', 'total_replicated_size_mb',
+            'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'last_replication_at', 
+                            'last_replication_duration_seconds', 'total_replicated_size_mb']
+
+
+class FailoverEventSerializer(serializers.ModelSerializer):
+    """Serializer pour les événements de failover"""
+    
+    vm_name = serializers.CharField(source='replication.virtual_machine.name', read_only=True)
+    triggered_by_username = serializers.CharField(source='triggered_by.username', read_only=True)
+    failover_type_display = serializers.CharField(source='get_failover_type_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = FailoverEvent
+        fields = [
+            'id', 'replication', 'vm_name', 'failover_type', 'failover_type_display',
+            'status', 'status_display', 'triggered_by', 'triggered_by_username',
+            'reason', 'source_vm_powered_off', 'destination_vm_powered_on',
+            'error_message', 'started_at', 'completed_at'
+        ]
+        read_only_fields = ['started_at', 'completed_at']
+
+
+# ==========================================================
+# 🔹 SUREBACKUP - Vérification de sauvegardes
+# ==========================================================
+class BackupVerificationSerializer(serializers.ModelSerializer):
+    """Serializer pour les vérifications de sauvegardes (SureBackup)"""
+    
+    backup_name = serializers.SerializerMethodField()
+    test_type_display = serializers.CharField(source='get_test_type_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    server_name = serializers.CharField(source='esxi_server.name', read_only=True)
+    
+    class Meta:
+        model = BackupVerification
+        fields = [
+            'id', 'ovf_export', 'vm_backup', 'backup_name',
+            'esxi_server', 'server_name', 'test_type', 'test_type_display',
+            'status', 'status_display', 'vm_restored', 'vm_booted',
+            'boot_time_seconds', 'ping_successful', 'services_checked',
+            'test_network', 'test_datastore', 'vm_cleanup_done',
+            'detailed_log', 'error_message', 'total_duration_seconds',
+            'started_at', 'completed_at', 'created_at'
+        ]
+        read_only_fields = ['created_at', 'started_at', 'completed_at', 
+                            'vm_restored', 'vm_booted', 'ping_successful', 'vm_cleanup_done']
+    
+    def get_backup_name(self, obj):
+        """Nom du backup vérifié"""
+        if obj.ovf_export:
+            return obj.ovf_export.vm_name
+        elif obj.vm_backup:
+            return obj.vm_backup.virtual_machine.name
+        return "Unknown"
+
+
+class BackupVerificationScheduleSerializer(serializers.ModelSerializer):
+    """Serializer pour les planifications de vérifications"""
+    
+    vm_name = serializers.CharField(source='virtual_machine.name', read_only=True, allow_null=True)
+    server_name = serializers.CharField(source='esxi_server.name', read_only=True)
+    frequency_display = serializers.CharField(source='get_frequency_display', read_only=True)
+    test_type_display = serializers.CharField(source='get_test_type_display', read_only=True)
+    
+    class Meta:
+        model = BackupVerificationSchedule
+        fields = [
+            'id', 'name', 'virtual_machine', 'vm_name',
+            'frequency', 'frequency_display', 'test_type', 'test_type_display',
+            'esxi_server', 'server_name', 'is_active',
+            'last_run_at', 'next_run_at', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'last_run_at', 'next_run_at']

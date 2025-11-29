@@ -7,7 +7,9 @@ from .views import (
     RestoreViewSet, BackupChainViewSet, DashboardViewSet,
     NotificationConfigViewSet, NotificationLogViewSet, HealthMonitoringViewSet,
     OVFExportJobViewSet, VMBackupJobViewSet, StoragePathViewSet,
-    login_view, logout_view, current_user_view
+    VMReplicationViewSet, FailoverEventViewSet,
+    BackupVerificationViewSet, BackupVerificationScheduleViewSet,
+    login_view, logout_view, current_user_view, prometheus_metrics
 )
 
 router = routers.DefaultRouter()
@@ -29,12 +31,19 @@ router.register(r'health', HealthMonitoringViewSet, basename='health')
 router.register(r'ovf-exports', OVFExportJobViewSet, basename='ovf-exports')
 router.register(r'vm-backups', VMBackupJobViewSet, basename='vm-backups')
 router.register(r'storage-paths', StoragePathViewSet, basename='storage-paths')
+router.register(r'vm-replications', VMReplicationViewSet, basename='vm-replications')
+router.register(r'failover-events', FailoverEventViewSet, basename='failover-events')
+router.register(r'backup-verifications', BackupVerificationViewSet, basename='backup-verifications')
+router.register(r'verification-schedules', BackupVerificationScheduleViewSet, basename='verification-schedules')
 
 urlpatterns = [
     # Authentication endpoints
     path('auth/login/', login_view, name='auth-login'),
     path('auth/logout/', logout_view, name='auth-logout'),
     path('auth/user/', current_user_view, name='auth-user'),
+
+    # Prometheus metrics for Grafana
+    path('metrics', prometheus_metrics, name='prometheus-metrics'),
 
     # Router URLs (all other endpoints)
     path('', include(router.urls)),

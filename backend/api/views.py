@@ -21,7 +21,8 @@ from backups.models import (
     BackupConfiguration, BackupJob, BackupLog,
     BackupSchedule, SnapshotSchedule, Snapshot,
     RemoteStorageConfig, NotificationConfig, NotificationLog,
-    StoragePath
+    StoragePath, VMReplication, FailoverEvent,
+    BackupVerification, BackupVerificationSchedule, OVFExportJob
 )
 from esxi.vmware_service import VMwareService
 from backups.backup_service import BackupService
@@ -36,7 +37,8 @@ from api.serializers import (
     RestoreVMSerializer, RestoreVMDKSerializer, FileRecoverySerializer,
     ListFilesSerializer, SearchFilesSerializer, ValidateRestoreSerializer,
     NotificationConfigSerializer, NotificationLogSerializer, TestNotificationSerializer,
-    StoragePathSerializer
+    StoragePathSerializer, VMReplicationSerializer, FailoverEventSerializer,
+    BackupVerificationSerializer, BackupVerificationScheduleSerializer
 )
 from backups.tasks import execute_backup_job  # Celery task
 
@@ -2304,3 +2306,353 @@ class StoragePathViewSet(viewsets.ModelViewSet):
         active_paths = self.queryset.filter(is_active=True)
         serializer = self.get_serializer(active_paths, many=True)
         return Response(serializer.data)
+
+
+# ==========================================================
+# 🔹 VM REPLICATION - Réplication de VMs
+# ==========================================================
+class VMReplicationViewSet(viewsets.ModelViewSet):
+    """Gestion de la réplication de VMs entre serveurs ESXi"""
+    queryset = VMReplication.objects.all()
+    serializer_class = VMReplicationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['virtual_machine', 'source_server', 'destination_server', 'status', 'is_active']
+    ordering_fields = ['created_at', 'last_replication_at', 'name']
+    ordering = ['-created_at']
+    
+    @action(detail=True, methods=['post'])
+    def start_replication(self, request, pk=None):
+        """Démarrer une réplication manuelle immédiate"""
+        replication = self.get_object()
+        
+        if not replication.is_active:
+            return Response(
+                {'error': 'La réplication est inactive'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # TODO: Implémenter la logique de réplication via service
+        # from backups.replication_service import ReplicationService
+        # service = ReplicationService()
+        # result = service.replicate_vm(replication)
+        
+        return Response({
+            'message': 'Réplication démarrée',
+            'replication_id': replication.id
+        })
+    
+    @action(detail=True, methods=['post'])
+    def pause(self, request, pk=None):
+        """Mettre en pause une réplication"""
+        replication = self.get_object()
+        replication.status = 'paused'
+        replication.is_active = False
+        replication.save()
+        
+        return Response({'message': 'Réplication mise en pause'})
+    
+    @action(detail=True, methods=['post'])
+    def resume(self, request, pk=None):
+        """Reprendre une réplication en pause"""
+        replication = self.get_object()
+        replication.status = 'active'
+        replication.is_active = True
+        replication.save()
+        
+        return Response({'message': 'Réplication reprise'})
+    
+    @action(detail=True, methods=['post'])
+    def trigger_failover(self, request, pk=None):
+        """Déclencher un failover manuel"""
+        replication = self.get_object()
+        
+        reason = request.data.get('reason', 'Failover manuel')
+        test_mode = request.data.get('test_mode', False)
+        
+        # Créer l'événement de failover
+        failover_event = FailoverEvent.objects.create(
+            replication=replication,
+            failover_type='test' if test_mode else 'manual',
+            status='initiated',
+            triggered_by=request.user,
+            reason=reason
+        )
+        
+        # TODO: Implémenter la logique de failover
+        # from backups.replication_service import ReplicationService
+        # service = ReplicationService()
+        # result = service.execute_failover(failover_event)
+        
+        serializer = FailoverEventSerializer(failover_event)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class FailoverEventViewSet(viewsets.ReadOnlyModelViewSet):
+    """Historique des événements de failover"""
+    queryset = FailoverEvent.objects.all()
+    serializer_class = FailoverEventSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['replication', 'failover_type', 'status']
+    ordering_fields = ['started_at', 'completed_at']
+    ordering = ['-started_at']
+
+
+# ==========================================================
+# 🔹 SUREBACKUP - Vérification de sauvegardes
+# ==========================================================
+class BackupVerificationViewSet(viewsets.ModelViewSet):
+    """Gestion des vérifications de sauvegardes (SureBackup)"""
+    queryset = BackupVerification.objects.all()
+    serializer_class = BackupVerificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['status', 'test_type', 'esxi_server']
+    ordering_fields = ['created_at', 'started_at', 'completed_at']
+    ordering = ['-created_at']
+    
+    @action(detail=False, methods=['post'])
+    def verify_ovf_export(self, request):
+        """Créer une vérification pour un export OVF"""
+        ovf_export_id = request.data.get('ovf_export_id')
+        esxi_server_id = request.data.get('esxi_server_id')
+        test_type = request.data.get('test_type', 'boot_ping')
+        
+        if not ovf_export_id or not esxi_server_id:
+            return Response(
+                {'error': 'ovf_export_id et esxi_server_id sont requis'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            ovf_export = OVFExportJob.objects.get(id=ovf_export_id, status='completed')
+            esxi_server = ESXiServer.objects.get(id=esxi_server_id)
+        except (OVFExportJob.DoesNotExist, ESXiServer.DoesNotExist) as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Créer la vérification
+        verification = BackupVerification.objects.create(
+            ovf_export=ovf_export,
+            esxi_server=esxi_server,
+            test_type=test_type,
+            status='pending',
+            test_datastore=request.data.get('test_datastore', 'datastore1')
+        )
+        
+        # TODO: Lancer la vérification en arrière-plan
+        # from backups.surebackup_service import SureBackupService
+        # service = SureBackupService()
+        # service.start_verification(verification.id)
+        
+        serializer = self.get_serializer(verification)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def start_verification(self, request, pk=None):
+        """Démarrer une vérification manuellement"""
+        verification = self.get_object()
+        
+        if verification.status != 'pending':
+            return Response(
+                {'error': 'La vérification a déjà été démarrée'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        verification.status = 'running'
+        verification.started_at = timezone.now()
+        verification.save()
+        
+        # TODO: Lancer le service de vérification
+        
+        serializer = self.get_serializer(verification)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """Statistiques sur les vérifications de sauvegardes"""
+        total = BackupVerification.objects.count()
+        passed = BackupVerification.objects.filter(status='passed').count()
+        failed = BackupVerification.objects.filter(status='failed').count()
+        running = BackupVerification.objects.filter(status='running').count()
+        
+        success_rate = (passed / total * 100) if total > 0 else 0
+        
+        return Response({
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'running': running,
+            'success_rate': round(success_rate, 2)
+        })
+
+
+class BackupVerificationScheduleViewSet(viewsets.ModelViewSet):
+    """Gestion des planifications de vérifications"""
+    queryset = BackupVerificationSchedule.objects.all()
+    serializer_class = BackupVerificationScheduleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['virtual_machine', 'frequency', 'is_active']
+    ordering_fields = ['name', 'created_at']
+    ordering = ['name']
+    
+    @action(detail=True, methods=['post'])
+    def toggle_active(self, request, pk=None):
+        """Activer/Désactiver une planification"""
+        schedule = self.get_object()
+        schedule.is_active = not schedule.is_active
+        schedule.save()
+        
+        serializer = self.get_serializer(schedule)
+        return Response(serializer.data)
+
+
+# ==========================================================
+# 🔹 PROMETHEUS METRICS - Pour Grafana
+# ==========================================================
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])  # Metrics accessibles sans auth
+def prometheus_metrics(request):
+    """
+    Endpoint Prometheus pour Grafana
+    Format: métrique{label="value"} valeur timestamp
+    """
+    from django.db.models import Count, Sum, Avg, Q
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    metrics = []
+    now = timezone.now()
+    last_24h = now - timedelta(hours=24)
+    last_7d = now - timedelta(days=7)
+    
+    # ===== MÉTRIQUES BACKUPS =====
+    total_backups = BackupJob.objects.count()
+    metrics.append(f'esxi_backups_total {total_backups}')
+    
+    backups_completed = BackupJob.objects.filter(status='completed').count()
+    metrics.append(f'esxi_backups_completed_total {backups_completed}')
+    
+    backups_failed = BackupJob.objects.filter(status='failed').count()
+    metrics.append(f'esxi_backups_failed_total {backups_failed}')
+    
+    backups_running = BackupJob.objects.filter(status='running').count()
+    metrics.append(f'esxi_backups_running {backups_running}')
+    
+    # Backups des dernières 24h
+    backups_24h = BackupJob.objects.filter(created_at__gte=last_24h).count()
+    metrics.append(f'esxi_backups_last_24h {backups_24h}')
+    
+    # Taux de succès
+    success_rate = (backups_completed / total_backups * 100) if total_backups > 0 else 0
+    metrics.append(f'esxi_backups_success_rate {success_rate:.2f}')
+    
+    # ===== MÉTRIQUES EXPORTS OVF =====
+    ovf_exports = OVFExportJob.objects.count()
+    metrics.append(f'esxi_ovf_exports_total {ovf_exports}')
+    
+    ovf_completed = OVFExportJob.objects.filter(status='completed').count()
+    metrics.append(f'esxi_ovf_exports_completed_total {ovf_completed}')
+    
+    ovf_failed = OVFExportJob.objects.filter(status='failed').count()
+    metrics.append(f'esxi_ovf_exports_failed_total {ovf_failed}')
+    
+    ovf_running = OVFExportJob.objects.filter(status='running').count()
+    metrics.append(f'esxi_ovf_exports_running {ovf_running}')
+    
+    # Taille totale exportée (en GB)
+    total_exported_mb = OVFExportJob.objects.filter(
+        status='completed'
+    ).aggregate(total=Sum('export_size_mb'))['total'] or 0
+    total_exported_gb = total_exported_mb / 1024
+    metrics.append(f'esxi_ovf_total_exported_gb {total_exported_gb:.2f}')
+    
+    # ===== MÉTRIQUES SERVEURS ESXi =====
+    esxi_servers = ESXiServer.objects.count()
+    metrics.append(f'esxi_servers_total {esxi_servers}')
+    
+    # ===== MÉTRIQUES VMS =====
+    vms_total = VirtualMachine.objects.count()
+    metrics.append(f'esxi_vms_total {vms_total}')
+    
+    vms_powered_on = VirtualMachine.objects.filter(power_state='poweredOn').count()
+    metrics.append(f'esxi_vms_powered_on {vms_powered_on}')
+    
+    vms_powered_off = VirtualMachine.objects.filter(power_state='poweredOff').count()
+    metrics.append(f'esxi_vms_powered_off {vms_powered_off}')
+    
+    # ===== MÉTRIQUES RÉPLICATION =====
+    replications_total = VMReplication.objects.count()
+    metrics.append(f'esxi_replications_total {replications_total}')
+    
+    replications_active = VMReplication.objects.filter(status='active', is_active=True).count()
+    metrics.append(f'esxi_replications_active {replications_active}')
+    
+    replications_paused = VMReplication.objects.filter(status='paused').count()
+    metrics.append(f'esxi_replications_paused {replications_paused}')
+    
+    replications_error = VMReplication.objects.filter(status='error').count()
+    metrics.append(f'esxi_replications_error {replications_error}')
+    
+    # Failovers
+    failovers_total = FailoverEvent.objects.count()
+    metrics.append(f'esxi_failovers_total {failovers_total}')
+    
+    failovers_completed = FailoverEvent.objects.filter(status='completed').count()
+    metrics.append(f'esxi_failovers_completed {failovers_completed}')
+    
+    failovers_failed = FailoverEvent.objects.filter(status='failed').count()
+    metrics.append(f'esxi_failovers_failed {failovers_failed}')
+    
+    # ===== MÉTRIQUES SUREBACKUP =====
+    verifications_total = BackupVerification.objects.count()
+    metrics.append(f'esxi_verifications_total {verifications_total}')
+    
+    verifications_passed = BackupVerification.objects.filter(status='passed').count()
+    metrics.append(f'esxi_verifications_passed {verifications_passed}')
+    
+    verifications_failed = BackupVerification.objects.filter(status='failed').count()
+    metrics.append(f'esxi_verifications_failed {verifications_failed}')
+    
+    verifications_running = BackupVerification.objects.filter(status='running').count()
+    metrics.append(f'esxi_verifications_running {verifications_running}')
+    
+    # Taux de succès des vérifications
+    verification_success_rate = (verifications_passed / verifications_total * 100) if verifications_total > 0 else 0
+    metrics.append(f'esxi_verifications_success_rate {verification_success_rate:.2f}')
+    
+    # ===== MÉTRIQUES DATASTORES =====
+    datastores = DatastoreInfo.objects.all()
+    for ds in datastores:
+        if ds.capacity and ds.free_space:
+            used_percent = ((ds.capacity - ds.free_space) / ds.capacity) * 100
+            # Utilisez des labels pour identifier chaque datastore
+            safe_name = ds.name.replace(' ', '_').replace('-', '_')
+            metrics.append(f'esxi_datastore_used_percent{{datastore="{ds.name}"}} {used_percent:.2f}')
+            metrics.append(f'esxi_datastore_capacity_gb{{datastore="{ds.name}"}} {ds.capacity / (1024**3):.2f}')
+            metrics.append(f'esxi_datastore_free_gb{{datastore="{ds.name}"}} {ds.free_space / (1024**3):.2f}')
+    
+    # ===== MÉTRIQUES SNAPSHOTS =====
+    snapshots_total = Snapshot.objects.count()
+    metrics.append(f'esxi_snapshots_total {snapshots_total}')
+    
+    # ===== MÉTRIQUES PERFORMANCES =====
+    # Temps moyen de backup (en secondes)
+    avg_backup_duration = BackupJob.objects.filter(
+        status='completed',
+        backup_duration_seconds__isnull=False
+    ).aggregate(avg=Avg('backup_duration_seconds'))['avg'] or 0
+    metrics.append(f'esxi_backup_avg_duration_seconds {avg_backup_duration:.2f}')
+    
+    # Temps moyen d'export OVF (en secondes)
+    avg_export_duration = OVFExportJob.objects.filter(
+        status='completed',
+        export_duration_seconds__isnull=False
+    ).aggregate(avg=Avg('export_duration_seconds'))['avg'] or 0
+    metrics.append(f'esxi_ovf_export_avg_duration_seconds {avg_export_duration:.2f}')
+    
+    # Construire la réponse au format Prometheus
+    response_text = '\n'.join(metrics) + '\n'
+    
+    from django.http import HttpResponse
+    return HttpResponse(response_text, content_type='text/plain; version=0.0.4')

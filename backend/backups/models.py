@@ -1146,3 +1146,404 @@ class StoragePath(models.Model):
         if self.is_default:
             StoragePath.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
         super().save(*args, **kwargs)
+
+
+# ==========================================================
+# 🔹 VM REPLICATION - Réplication de VMs entre serveurs ESXi
+# ==========================================================
+class VMReplication(models.Model):
+    """
+    Configuration de réplication de VM entre deux serveurs ESXi
+    Permet la réplication continue et le failover automatique/manuel
+    """
+    REPLICATION_STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('paused', 'En pause'),
+        ('error', 'Erreur'),
+        ('syncing', 'Synchronisation en cours')
+    ]
+
+    FAILOVER_MODE_CHOICES = [
+        ('manual', 'Manuel uniquement'),
+        ('automatic', 'Automatique'),
+        ('test', 'Mode test (pas de failover réel)')
+    ]
+
+    name = models.CharField(
+        max_length=200,
+        help_text="Nom descriptif de la réplication"
+    )
+
+    virtual_machine = models.ForeignKey(
+        'esxi.VirtualMachine',
+        on_delete=models.CASCADE,
+        related_name='replications',
+        help_text="VM source à répliquer"
+    )
+
+    source_server = models.ForeignKey(
+        'esxi.ESXiServer',
+        on_delete=models.CASCADE,
+        related_name='replication_sources',
+        help_text="Serveur ESXi source"
+    )
+
+    destination_server = models.ForeignKey(
+        'esxi.ESXiServer',
+        on_delete=models.CASCADE,
+        related_name='replication_destinations',
+        help_text="Serveur ESXi de réplication"
+    )
+
+    destination_datastore = models.CharField(
+        max_length=200,
+        help_text="Datastore de destination sur le serveur cible"
+    )
+
+    replication_interval_minutes = models.IntegerField(
+        default=15,
+        help_text="Intervalle de réplication en minutes (minimum 5)"
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=REPLICATION_STATUS_CHOICES,
+        default='active'
+    )
+
+    failover_mode = models.CharField(
+        max_length=20,
+        choices=FAILOVER_MODE_CHOICES,
+        default='manual',
+        help_text="Mode de basculement en cas de panne"
+    )
+
+    auto_failover_threshold_minutes = models.IntegerField(
+        default=5,
+        help_text="Délai avant failover automatique (en minutes)"
+    )
+
+    last_replication_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Dernière réplication réussie"
+    )
+
+    last_replication_duration_seconds = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Durée de la dernière réplication en secondes"
+    )
+
+    total_replicated_size_mb = models.FloatField(
+        default=0,
+        help_text="Taille totale répliquée en MB"
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Réplication active"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Réplication VM"
+        verbose_name_plural = "Réplications VM"
+        ordering = ['-created_at']
+        unique_together = ['virtual_machine', 'destination_server']
+
+    def __str__(self):
+        return f"Replication: {self.virtual_machine.name} -> {self.destination_server.name}"
+
+
+class FailoverEvent(models.Model):
+    """
+    Historique des événements de failover (basculement)
+    """
+    FAILOVER_TYPE_CHOICES = [
+        ('manual', 'Manuel'),
+        ('automatic', 'Automatique'),
+        ('test', 'Test')
+    ]
+
+    STATUS_CHOICES = [
+        ('initiated', 'Initié'),
+        ('in_progress', 'En cours'),
+        ('completed', 'Terminé'),
+        ('failed', 'Échoué'),
+        ('rolled_back', 'Annulé (rollback)')
+    ]
+
+    replication = models.ForeignKey(
+        VMReplication,
+        on_delete=models.CASCADE,
+        related_name='failover_events'
+    )
+
+    failover_type = models.CharField(
+        max_length=20,
+        choices=FAILOVER_TYPE_CHOICES
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='initiated'
+    )
+
+    triggered_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Utilisateur ayant déclenché le failover (si manuel)"
+    )
+
+    reason = models.TextField(
+        blank=True,
+        help_text="Raison du failover"
+    )
+
+    source_vm_powered_off = models.BooleanField(
+        default=False,
+        help_text="VM source arrêtée pendant le failover"
+    )
+
+    destination_vm_powered_on = models.BooleanField(
+        default=False,
+        help_text="VM répliquée démarrée"
+    )
+
+    error_message = models.TextField(
+        blank=True,
+        help_text="Message d'erreur si échec"
+    )
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Événement Failover"
+        verbose_name_plural = "Événements Failover"
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f"Failover {self.failover_type}: {self.replication.virtual_machine.name} ({self.status})"
+
+
+# ==========================================================
+# 🔹 SUREBACKUP - Vérification automatique des sauvegardes
+# ==========================================================
+class BackupVerification(models.Model):
+    """
+    Vérification automatique qu'une sauvegarde est restaurable (SureBackup)
+    Monte la sauvegarde, démarre la VM dans un réseau isolé, vérifie qu'elle boot
+    """
+    VERIFICATION_STATUS_CHOICES = [
+        ('pending', 'En attente'),
+        ('running', 'En cours'),
+        ('passed', 'Réussie'),
+        ('failed', 'Échouée'),
+        ('warning', 'Avertissement')
+    ]
+
+    TEST_TYPE_CHOICES = [
+        ('boot', 'Test démarrage uniquement'),
+        ('boot_ping', 'Démarrage + Ping'),
+        ('boot_ping_services', 'Démarrage + Ping + Services'),
+        ('full', 'Test complet personnalisé')
+    ]
+
+    # Peut vérifier soit un export OVF soit un backup VMDK
+    ovf_export = models.ForeignKey(
+        OVFExportJob,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='verifications',
+        help_text="Export OVF à vérifier"
+    )
+
+    vm_backup = models.ForeignKey(
+        VMBackupJob,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='verifications',
+        help_text="Backup VMDK à vérifier"
+    )
+
+    esxi_server = models.ForeignKey(
+        'esxi.ESXiServer',
+        on_delete=models.CASCADE,
+        help_text="Serveur ESXi pour effectuer le test"
+    )
+
+    test_type = models.CharField(
+        max_length=30,
+        choices=TEST_TYPE_CHOICES,
+        default='boot_ping'
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=VERIFICATION_STATUS_CHOICES,
+        default='pending'
+    )
+
+    # Résultats des tests
+    vm_restored = models.BooleanField(
+        default=False,
+        help_text="VM restaurée avec succès"
+    )
+
+    vm_booted = models.BooleanField(
+        default=False,
+        help_text="VM a démarré"
+    )
+
+    boot_time_seconds = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Temps de démarrage en secondes"
+    )
+
+    ping_successful = models.BooleanField(
+        default=False,
+        help_text="Ping réseau réussi"
+    )
+
+    services_checked = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Services vérifiés et leur état"
+    )
+
+    # Détails de vérification
+    test_network = models.CharField(
+        max_length=100,
+        default='VM Network Isolated',
+        help_text="Réseau isolé pour les tests"
+    )
+
+    test_datastore = models.CharField(
+        max_length=200,
+        help_text="Datastore utilisé pour le test"
+    )
+
+    vm_cleanup_done = models.BooleanField(
+        default=False,
+        help_text="VM de test supprimée après vérification"
+    )
+
+    # Logs et résultats
+    detailed_log = models.TextField(
+        blank=True,
+        help_text="Log détaillé de la vérification"
+    )
+
+    error_message = models.TextField(
+        blank=True,
+        help_text="Message d'erreur si échec"
+    )
+
+    # Métriques
+    total_duration_seconds = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Durée totale de la vérification"
+    )
+
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Vérification Backup (SureBackup)"
+        verbose_name_plural = "Vérifications Backup (SureBackup)"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        backup_name = self.ovf_export.vm_name if self.ovf_export else self.vm_backup.virtual_machine.name if self.vm_backup else "Unknown"
+        return f"Verification: {backup_name} - {self.status}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        # Doit avoir soit ovf_export soit vm_backup, mais pas les deux
+        if not self.ovf_export and not self.vm_backup:
+            raise ValidationError("Doit spécifier soit un export OVF soit un backup VMDK")
+        if self.ovf_export and self.vm_backup:
+            raise ValidationError("Ne peut pas spécifier à la fois OVF export et backup VMDK")
+
+
+class BackupVerificationSchedule(models.Model):
+    """
+    Planification automatique des vérifications de sauvegardes
+    """
+    FREQUENCY_CHOICES = [
+        ('daily', 'Quotidienne'),
+        ('weekly', 'Hebdomadaire'),
+        ('monthly', 'Mensuelle'),
+        ('after_backup', 'Après chaque sauvegarde')
+    ]
+
+    name = models.CharField(
+        max_length=200,
+        help_text="Nom de la planification"
+    )
+
+    virtual_machine = models.ForeignKey(
+        'esxi.VirtualMachine',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="VM spécifique à vérifier (null = toutes les VMs)"
+    )
+
+    frequency = models.CharField(
+        max_length=20,
+        choices=FREQUENCY_CHOICES,
+        default='weekly'
+    )
+
+    test_type = models.CharField(
+        max_length=30,
+        choices=BackupVerification.TEST_TYPE_CHOICES,
+        default='boot_ping'
+    )
+
+    esxi_server = models.ForeignKey(
+        'esxi.ESXiServer',
+        on_delete=models.CASCADE,
+        help_text="Serveur pour effectuer les tests"
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Planification active"
+    )
+
+    last_run_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    next_run_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Planification Vérification"
+        verbose_name_plural = "Planifications Vérification"
+        ordering = ['name']
+
+    def __str__(self):
+        vm_name = self.virtual_machine.name if self.virtual_machine else "Toutes les VMs"
+        return f"{self.name} - {vm_name} ({self.frequency})"
+
