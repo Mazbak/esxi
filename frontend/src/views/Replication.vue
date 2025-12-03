@@ -219,70 +219,261 @@
       </div>
     </div>
 
-    <!-- Create/Edit Modal -->
-    <div v-if="showCreateModal || editingReplication" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h3 class="text-lg font-semibold text-gray-900">
-            {{ editingReplication ? 'Modifier la Réplication' : 'Nouvelle Réplication' }}
-          </h3>
-        </div>
-        <div class="px-6 py-4 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Nom</label>
-            <input v-model="form.name" type="text" class="input" placeholder="Ex: Réplication WebServer" />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Machine Virtuelle</label>
-            <select v-model="form.virtual_machine" class="input">
-              <option value="">Sélectionner une VM...</option>
-              <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">{{ vm.name }}</option>
-            </select>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Serveur Source</label>
-              <select v-model="form.source_server" class="input">
-                <option value="">Sélectionner...</option>
-                <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
-              </select>
+    <!-- Create/Edit Modal - Modern Design -->
+    <div v-if="showCreateModal || editingReplication" class="fixed inset-0 bg-gradient-to-br from-gray-900/80 via-gray-900/70 to-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+      <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden transform transition-all animate-slide-up">
+        <!-- Modern Header with Gradient -->
+        <div class="relative px-8 py-6 bg-gradient-to-r from-blue-600 via-blue-500 to-purple-600 overflow-hidden">
+          <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDEwIEwgNDAgMTAgTSAxMCAwIEwgMTAgNDAgTSAwIDIwIEwgNDAgMjAgTSAyMCAwIEwgMjAgNDAgTSAwIDMwIEwgNDAgMzAgTSAzMCAwIEwgMzAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-10"></div>
+          <div class="relative flex items-center gap-4">
+            <div class="p-3 bg-white/20 backdrop-blur-sm rounded-xl">
+              <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Serveur Destination</label>
-              <select v-model="form.destination_server" class="input">
-                <option value="">Sélectionner...</option>
-                <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
-              </select>
+              <h3 class="text-2xl font-bold text-white">
+                {{ editingReplication ? 'Modifier la Réplication' : 'Nouvelle Réplication' }}
+              </h3>
+              <p class="text-blue-100 text-sm mt-1">Configurez la réplication entre vos serveurs ESXi</p>
             </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Datastore Destination</label>
-            <input v-model="form.destination_datastore" type="text" class="input" placeholder="Ex: datastore1" />
+          <button @click="closeModal" class="absolute top-6 right-6 p-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-lg transition-colors">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Form Content with Beautiful Spacing -->
+        <div class="px-8 py-6 space-y-6 overflow-y-auto max-h-[calc(90vh-180px)] custom-scrollbar">
+          <!-- Nom du replication -->
+          <div class="group">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+              <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+              Nom de la réplication
+            </label>
+            <input
+              v-model="form.name"
+              type="text"
+              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900 placeholder-gray-400"
+              placeholder="Ex: Réplication WebServer Prod"
+            />
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Intervalle de Réplication (minutes)</label>
-            <input v-model.number="form.replication_interval_minutes" type="number" class="input" min="15" step="15" />
+
+          <!-- Machine Virtuelle -->
+          <div class="group">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+              <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+              </svg>
+              Machine Virtuelle
+            </label>
+            <div class="relative">
+              <select
+                v-model="form.virtual_machine"
+                class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                :class="{'border-amber-400 bg-amber-50': virtualMachines.length === 0}"
+              >
+                <option value="">{{ virtualMachines.length === 0 ? 'Aucune VM disponible - Ajoutez un serveur ESXi' : 'Sélectionner une VM...' }}</option>
+                <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">{{ vm.name }}</option>
+              </select>
+              <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <p v-if="virtualMachines.length === 0" class="mt-2 text-xs text-amber-600 flex items-center gap-1">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              Ajoutez d'abord un serveur ESXi et synchronisez les VMs dans le menu Serveurs ESXi
+            </p>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Mode de Failover</label>
-            <select v-model="form.failover_mode" class="input">
-              <option value="manual">Manuel</option>
-              <option value="automatic">Automatique</option>
-            </select>
+
+          <!-- Serveurs Source et Destination -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Source Server -->
+            <div class="group">
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                </svg>
+                Serveur Source
+              </label>
+              <div class="relative">
+                <select
+                  v-model="form.source_server"
+                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-4 focus:ring-green-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                  :class="{'border-amber-400 bg-amber-50': esxiServers.length === 0}"
+                >
+                  <option value="">{{ esxiServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner...' }}</option>
+                  <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
+                </select>
+                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
+
+            <!-- Destination Server -->
+            <div class="group">
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                </svg>
+                Serveur Destination
+              </label>
+              <div class="relative">
+                <select
+                  v-model="form.destination_server"
+                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                  :class="{'border-amber-400 bg-amber-50': esxiServers.length === 0}"
+                >
+                  <option value="">{{ esxiServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner...' }}</option>
+                  <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
+                </select>
+                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
           </div>
-          <div v-if="form.failover_mode === 'automatic'">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Seuil Auto-Failover (minutes)</label>
-            <input v-model.number="form.auto_failover_threshold_minutes" type="number" class="input" min="5" />
-            <p class="mt-1 text-xs text-gray-500">Temps d'indisponibilité avant déclenchement auto du failover</p>
+
+          <!-- Alert if no servers -->
+          <div v-if="esxiServers.length === 0" class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4">
+            <div class="flex items-start gap-3">
+              <svg class="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              <div>
+                <h4 class="text-sm font-semibold text-amber-900 mb-1">Aucun serveur ESXi disponible</h4>
+                <p class="text-sm text-amber-800">Vous devez d'abord ajouter au moins deux serveurs ESXi dans le menu "Serveurs ESXi" avant de pouvoir créer une réplication.</p>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center">
-            <input v-model="form.is_active" type="checkbox" id="is_active" class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded" />
-            <label for="is_active" class="ml-2 block text-sm text-gray-900">Activer la réplication</label>
+
+          <!-- Datastore Destination -->
+          <div class="group">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+              <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+              </svg>
+              Datastore Destination
+            </label>
+            <input
+              v-model="form.destination_datastore"
+              type="text"
+              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 placeholder-gray-400"
+              placeholder="Ex: datastore1"
+            />
+          </div>
+
+          <!-- Intervalle et Mode -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Intervalle -->
+            <div class="group">
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Intervalle (minutes)
+              </label>
+              <input
+                v-model.number="form.replication_interval_minutes"
+                type="number"
+                min="15"
+                step="15"
+                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900"
+              />
+            </div>
+
+            <!-- Mode Failover -->
+            <div class="group">
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Mode de Failover
+              </label>
+              <div class="relative">
+                <select
+                  v-model="form.failover_mode"
+                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-red-500 focus:ring-4 focus:ring-red-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                >
+                  <option value="manual">Manuel</option>
+                  <option value="automatic">Automatique</option>
+                </select>
+                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Auto-Failover Threshold (conditional) -->
+          <div v-if="form.failover_mode === 'automatic'" class="group bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200 rounded-xl p-4">
+            <label class="flex items-center gap-2 text-sm font-semibold text-red-800 mb-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Seuil Auto-Failover (minutes)
+            </label>
+            <input
+              v-model.number="form.auto_failover_threshold_minutes"
+              type="number"
+              min="5"
+              class="w-full px-4 py-3 border-2 border-red-300 bg-white rounded-xl focus:border-red-500 focus:ring-4 focus:ring-red-500/20 transition-all outline-none text-gray-900"
+            />
+            <p class="mt-2 text-xs text-red-700 flex items-center gap-1">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              Temps d'indisponibilité avant déclenchement automatique du failover
+            </p>
+          </div>
+
+          <!-- Activer la réplication -->
+          <div class="flex items-center gap-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
+            <input
+              v-model="form.is_active"
+              type="checkbox"
+              id="is_active"
+              class="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+            />
+            <label for="is_active" class="flex-1 flex items-center gap-2 text-sm font-semibold text-gray-900 cursor-pointer">
+              <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              Activer la réplication immédiatement
+            </label>
           </div>
         </div>
-        <div class="px-6 py-4 bg-gray-50 flex justify-end space-x-3">
-          <button @click="closeModal" class="btn-secondary">Annuler</button>
-          <button @click="saveReplication" class="btn-primary" :disabled="saving">
+
+        <!-- Modern Footer with Gradient Buttons -->
+        <div class="px-8 py-6 bg-gradient-to-r from-gray-50 to-gray-100 border-t border-gray-200 flex justify-end gap-3">
+          <button
+            @click="closeModal"
+            class="px-6 py-3 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-white hover:border-gray-400 hover:shadow-md transition-all duration-200 flex items-center gap-2"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Annuler
+          </button>
+          <button
+            @click="saveReplication"
+            class="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl hover:from-blue-700 hover:to-purple-700 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+            :disabled="saving"
+          >
+            <svg v-if="!saving" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            <svg v-else class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
             {{ saving ? 'Enregistrement...' : 'Enregistrer' }}
           </button>
         </div>
@@ -518,3 +709,54 @@ function formatDateTime(dateString) {
   })
 }
 </script>
+
+<style scoped>
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #2563eb, #7c3aed);
+}
+
+/* Fade in animation */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Slide up animation */
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+</style>
