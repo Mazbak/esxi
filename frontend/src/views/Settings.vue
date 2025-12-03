@@ -268,6 +268,90 @@
           </div>
         </div>
 
+        <!-- Storage Paths Configuration Card -->
+        <div class="bg-white rounded-2xl shadow-xl p-6 border-2 border-gray-200">
+          <div class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+              <div class="p-2 bg-gradient-to-r from-indigo-100 to-blue-100 rounded-lg">
+                <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </div>
+              <h2 class="text-xl font-bold text-gray-900">Emplacements de Sauvegarde</h2>
+            </div>
+            <button
+              type="button"
+              @click="showAddPathModal = true"
+              class="px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-lg hover:from-indigo-700 hover:to-blue-700 transition-all flex items-center gap-2"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              Ajouter
+            </button>
+          </div>
+
+          <!-- Storage Paths List -->
+          <div v-if="loadingPaths" class="flex justify-center py-8">
+            <div class="animate-spin rounded-full h-8 w-8 border-4 border-indigo-500 border-t-transparent"></div>
+          </div>
+
+          <div v-else-if="storagePaths.length === 0" class="text-center py-8">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            <p class="mt-2 text-sm text-gray-600">Aucun emplacement de sauvegarde configuré</p>
+          </div>
+
+          <div v-else class="space-y-3">
+            <div
+              v-for="path in storagePaths"
+              :key="path.id"
+              class="flex items-center justify-between p-4 rounded-xl border-2 transition-all"
+              :class="path.is_default ? 'bg-gradient-to-r from-indigo-50 to-blue-50 border-indigo-300' : 'bg-gray-50 border-gray-200 hover:border-gray-300'"
+            >
+              <div class="flex items-center gap-3 flex-1">
+                <svg class="w-5 h-5" :class="path.is_default ? 'text-indigo-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                <div class="flex-1">
+                  <p class="font-medium text-gray-900">{{ path.name }}</p>
+                  <p class="text-sm text-gray-600 font-mono">{{ path.path }}</p>
+                </div>
+                <span
+                  v-if="path.is_default"
+                  class="px-3 py-1 bg-indigo-600 text-white text-xs font-semibold rounded-full"
+                >
+                  Par défaut
+                </span>
+              </div>
+              <div class="flex items-center gap-2 ml-4">
+                <button
+                  v-if="!path.is_default"
+                  @click="setDefaultPath(path.id)"
+                  type="button"
+                  class="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                  title="Définir par défaut"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                </button>
+                <button
+                  @click="deletePath(path.id)"
+                  type="button"
+                  class="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Supprimer"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Action Buttons -->
         <div class="flex gap-4">
           <button
@@ -302,13 +386,110 @@
           </button>
         </div>
       </form>
+
+      <!-- Add Storage Path Modal -->
+      <div v-if="showAddPathModal" class="fixed inset-0 bg-gradient-to-br from-gray-900/80 via-gray-900/70 to-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full transform transition-all">
+          <!-- Modal Header -->
+          <div class="relative px-6 py-4 bg-gradient-to-r from-indigo-600 to-blue-600">
+            <div class="flex items-center gap-3">
+              <div class="p-2 bg-white/20 backdrop-blur-sm rounded-lg">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </div>
+              <h3 class="text-xl font-bold text-white">Ajouter un Emplacement</h3>
+            </div>
+            <button @click="closePathModal" class="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-lg transition-colors">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Modal Body -->
+          <form @submit.prevent="addStoragePath" class="p-6 space-y-4">
+            <div>
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                </svg>
+                Nom de l'emplacement
+              </label>
+              <input
+                v-model="newPath.name"
+                type="text"
+                required
+                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none"
+                placeholder="Stockage Principal"
+              />
+            </div>
+
+            <div>
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+                <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                Chemin absolu
+              </label>
+              <input
+                v-model="newPath.path"
+                type="text"
+                required
+                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none font-mono text-sm"
+                placeholder="/mnt/backups"
+              />
+            </div>
+
+            <div class="flex items-center gap-3 p-4 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl border-2 border-indigo-200">
+              <input
+                v-model="newPath.is_default"
+                type="checkbox"
+                id="path_is_default"
+                class="h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
+              />
+              <label for="path_is_default" class="flex-1 flex items-center gap-2 text-sm font-semibold text-gray-900 cursor-pointer">
+                <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+                Définir comme emplacement par défaut
+              </label>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="flex gap-3 pt-4">
+              <button
+                type="button"
+                @click="closePathModal"
+                class="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 hover:border-gray-400 transition-all"
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                :disabled="savingPath"
+                class="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-xl hover:from-indigo-700 hover:to-blue-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg v-if="!savingPath" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                <svg v-else class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {{ savingPath ? 'Ajout...' : 'Ajouter' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { emailSettingsAPI } from '../services/api'
+import { emailSettingsAPI, storagePathsAPI } from '../services/api'
 import { useToastStore } from '@/stores/toast'
 
 const toast = useToastStore()
@@ -316,6 +497,17 @@ const toast = useToastStore()
 const loading = ref(true)
 const saving = ref(false)
 const testingSMTP = ref(false)
+
+// Storage Paths
+const loadingPaths = ref(false)
+const savingPath = ref(false)
+const showAddPathModal = ref(false)
+const storagePaths = ref([])
+const newPath = ref({
+  name: '',
+  path: '',
+  is_default: false
+})
 
 const settings = ref({
   smtp_host: 'smtp.gmail.com',
@@ -335,7 +527,7 @@ const settings = ref({
 })
 
 onMounted(async () => {
-  await loadSettings()
+  await Promise.all([loadSettings(), loadStoragePaths()])
 })
 
 async function loadSettings() {
@@ -389,6 +581,70 @@ async function sendTestEmail() {
     toast.error(errorMessage)
   } finally {
     testingSMTP.value = false
+  }
+}
+
+// Storage Paths Functions
+async function loadStoragePaths() {
+  loadingPaths.value = true
+  try {
+    const response = await storagePathsAPI.getAll()
+    storagePaths.value = response.data.results || response.data
+  } catch (error) {
+    console.error('Error loading storage paths:', error)
+    toast.error('Erreur lors du chargement des emplacements')
+  } finally {
+    loadingPaths.value = false
+  }
+}
+
+function closePathModal() {
+  showAddPathModal.value = false
+  newPath.value = {
+    name: '',
+    path: '',
+    is_default: false
+  }
+}
+
+async function addStoragePath() {
+  savingPath.value = true
+  try {
+    await storagePathsAPI.create(newPath.value)
+    toast.success('Emplacement ajouté avec succès')
+    closePathModal()
+    await loadStoragePaths()
+  } catch (error) {
+    console.error('Error adding storage path:', error)
+    toast.error("Erreur lors de l'ajout de l'emplacement")
+  } finally {
+    savingPath.value = false
+  }
+}
+
+async function setDefaultPath(pathId) {
+  try {
+    await storagePathsAPI.setDefault(pathId)
+    toast.success('Emplacement défini par défaut')
+    await loadStoragePaths()
+  } catch (error) {
+    console.error('Error setting default path:', error)
+    toast.error('Erreur lors de la définition par défaut')
+  }
+}
+
+async function deletePath(pathId) {
+  if (!confirm('Êtes-vous sûr de vouloir supprimer cet emplacement ?')) {
+    return
+  }
+
+  try {
+    await storagePathsAPI.delete(pathId)
+    toast.success('Emplacement supprimé')
+    await loadStoragePaths()
+  } catch (error) {
+    console.error('Error deleting path:', error)
+    toast.error("Erreur lors de la suppression de l'emplacement")
   }
 }
 </script>
