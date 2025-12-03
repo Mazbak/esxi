@@ -437,25 +437,95 @@ class OVFExportLeaseService:
 
     def _generate_ovf_descriptor(self, downloaded_files):
         """
-        Generate OVF descriptor XML
+        Generate complete OVF descriptor XML with all required sections
         """
-        # Basic OVF template
+        # Get VM info for hardware specs
+        memory_mb = getattr(self.vm.config.hardware, 'memoryMB', 1024)
+        num_cpus = getattr(self.vm.config.hardware, 'numCPU', 1)
+        guest_id = getattr(self.vm.config, 'guestId', 'otherGuest')
+
+        # Basic OVF template with proper XML structure
         ovf_template = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Envelope vmw:buildId="build-123456" xmlns="http://schemas.dmtf.org/ovf/envelope/1" xmlns:cim="http://schemas.dmtf.org/wbem/wscim/1/common" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1" xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:vmw="http://www.vmware.com/schema/ovf" xmlns:vssd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <References>
 """
 
         # Add file references
+        file_refs = []
+        disk_refs = []
         for i, file_info in enumerate(downloaded_files):
             if file_info['filename'].endswith('.vmdk'):
-                ovf_template += f'    <File ovf:href="{file_info["filename"]}" ovf:id="file{i}" ovf:size="{int(file_info["size_mb"] * 1024 * 1024)}"/>\n'
+                size_bytes = int(file_info["size_mb"] * 1024 * 1024)
+                ovf_template += f'    <File ovf:href="{file_info["filename"]}" ovf:id="file{i}" ovf:size="{size_bytes}"/>\n'
+                file_refs.append((i, file_info["filename"], size_bytes))
 
         ovf_template += """  </References>
-  <VirtualSystem ovf:id="vm">
+  <DiskSection>
+    <Info>Virtual disk information</Info>
+"""
+
+        # Add disk entries
+        for i, filename, size_bytes in file_refs:
+            # Use a reasonable capacity (actual VMDK size * 2 for safety)
+            capacity = size_bytes * 2
+            ovf_template += f'    <Disk ovf:capacity="{capacity}" ovf:capacityAllocationUnits="byte" ovf:diskId="vmdisk{i}" ovf:fileRef="file{i}" ovf:format="http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"/>\n'
+
+        ovf_template += """  </DiskSection>
+  <NetworkSection>
+    <Info>The list of logical networks</Info>
+    <Network ovf:name="VM Network">
+      <Description>The VM Network network</Description>
+    </Network>
+  </NetworkSection>
+  <VirtualSystem ovf:id=\"""" + self.vm_name + """\">
     <Info>A virtual machine</Info>
     <Name>""" + self.vm_name + """</Name>
+    <OperatingSystemSection ovf:id="0" vmw:osType=\"""" + guest_id + """\">
+      <Info>The kind of installed guest operating system</Info>
+    </OperatingSystemSection>
+    <VirtualHardwareSection>
+      <Info>Virtual hardware requirements</Info>
+      <System>
+        <vssd:ElementName>Virtual Hardware Family</vssd:ElementName>
+        <vssd:InstanceID>0</vssd:InstanceID>
+        <vssd:VirtualSystemType>vmx-13</vssd:VirtualSystemType>
+      </System>
+      <Item>
+        <rasd:AllocationUnits>hertz * 10^6</rasd:AllocationUnits>
+        <rasd:Description>Number of Virtual CPUs</rasd:Description>
+        <rasd:ElementName>""" + str(num_cpus) + """ virtual CPU(s)</rasd:ElementName>
+        <rasd:InstanceID>1</rasd:InstanceID>
+        <rasd:ResourceType>3</rasd:ResourceType>
+        <rasd:VirtualQuantity>""" + str(num_cpus) + """</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:AllocationUnits>byte * 2^20</rasd:AllocationUnits>
+        <rasd:Description>Memory Size</rasd:Description>
+        <rasd:ElementName>""" + str(memory_mb) + """MB of memory</rasd:ElementName>
+        <rasd:InstanceID>2</rasd:InstanceID>
+        <rasd:ResourceType>4</rasd:ResourceType>
+        <rasd:VirtualQuantity>""" + str(memory_mb) + """</rasd:VirtualQuantity>
+      </Item>
+"""
+
+        # Add disk controllers and disks
+        for i, filename, size_bytes in file_refs:
+            item_id = 3 + i
+            ovf_template += f"""      <Item>
+        <rasd:AddressOnParent>{i}</rasd:AddressOnParent>
+        <rasd:ElementName>Disk {i+1}</rasd:ElementName>
+        <rasd:HostResource>ovf:/disk/vmdisk{i}</rasd:HostResource>
+        <rasd:InstanceID>{item_id}</rasd:InstanceID>
+        <rasd:Parent>3</rasd:Parent>
+        <rasd:ResourceType>17</rasd:ResourceType>
+      </Item>
+"""
+
+        ovf_template += """    </VirtualHardwareSection>
   </VirtualSystem>
 </Envelope>"""
+
+        logger.info(f"[OVF-EXPORT] Generated complete OVF descriptor with {len(file_refs)} disk(s), {num_cpus} CPU(s), {memory_mb}MB RAM")
 
         return ovf_template
 
