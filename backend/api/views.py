@@ -2113,12 +2113,12 @@ class OVFExportJobViewSet(viewsets.ModelViewSet):
         """Crée un export OVF et le démarre"""
         export_job = serializer.save(created_by=self.request.user, status='pending')
 
-        # Générer le chemin complet
-        timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+        # Générer le chemin complet avec format: VM-NAME_DD-MM-YYYY_HH-MM
+        timestamp = timezone.now().strftime('%d-%m-%Y_%H-%M')
         vm_name = export_job.virtual_machine.name
         export_job.export_full_path = os.path.join(
             export_job.export_location,
-            f"ovf_export_{vm_name}_{timestamp}"
+            f"{vm_name}_{timestamp}"
         )
         export_job.save()
 
