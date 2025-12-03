@@ -714,14 +714,15 @@ class SnapshotViewSet(viewsets.ModelViewSet):
                 success = vmware.delete_snapshot(vm.vm_id, snapshot.snapshot_name)
                 vmware.disconnect()
 
+                # Supprimer de la base de données même si la suppression ESXi a échoué
+                # (le snapshot peut avoir été déjà supprimé manuellement du serveur)
+                snapshot.delete()
+
                 if success:
-                    snapshot.delete()
                     return Response({'status': 'success', 'message': 'Snapshot supprimé'})
                 else:
-                    return Response(
-                        {'status': 'error', 'message': 'Échec de la suppression'},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
+                    logger.warning(f"[SNAPSHOT] Snapshot {snapshot.snapshot_name} non trouvé sur ESXi, supprimé de la base de données")
+                    return Response({'status': 'success', 'message': 'Snapshot supprimé de la base de données (déjà absent du serveur)'})
             else:
                 return Response(
                     {'status': 'error', 'message': 'Connexion ESXi échouée'},
