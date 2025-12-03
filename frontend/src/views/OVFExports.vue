@@ -183,7 +183,7 @@
     <Modal :show="showCreateModal" title="Créer une Sauvegarde" @close="showCreateModal = false">
       <form @submit.prevent="handleCreate" class="space-y-4">
         <div>
-          <label class="label">Machine virtuelle</label>
+          <label class="label">Machine virtuelle <span class="text-red-500">*</span></label>
           <select v-model="form.virtual_machine" required class="input-field" :disabled="creating">
             <option value="">Sélectionnez une VM</option>
             <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">
@@ -198,7 +198,7 @@
             <svg class="w-5 h-5 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
-            Format de sauvegarde
+            Format de sauvegarde <span class="text-red-500 ml-1">*</span>
           </label>
           <select v-model="form.export_format" required class="input-field mt-2" :disabled="creating">
             <option value="ova">✅ OVA - Archive unique (Recommandé)</option>
@@ -224,7 +224,7 @@
         </div>
 
         <div>
-          <label class="label">Emplacement de sauvegarde</label>
+          <label class="label">Emplacement de sauvegarde <span class="text-red-500">*</span></label>
 
           <!-- Sélecteur de chemins prédéfinis -->
           <div v-if="storagePaths.length > 0" class="mb-2">
