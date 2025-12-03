@@ -138,6 +138,27 @@ class VMwareService:
         container.Destroy()
         return datastores_list
 
+    def get_networks(self):
+        """Récupère les réseaux disponibles sur le serveur ESXi"""
+        networks_list = []
+        if not self.content:
+            return networks_list
+
+        try:
+            container = self.content.viewManager.CreateContainerView(
+                self.content.rootFolder, [vim.Network], True
+            )
+            for network in container.view:
+                networks_list.append({
+                    'name': network.name,
+                    'type': type(network).__name__
+                })
+            container.Destroy()
+        except Exception as e:
+            logger.error(f"[VMWARE] Erreur lors de la récupération des réseaux: {str(e)}")
+
+        return networks_list
+
     def export_vm(self, vm_id, export_path, progress_callback=None, backup_mode='thin'):
         """
         Exporte une VM en copiant ses fichiers VMDK et fichiers de configuration.

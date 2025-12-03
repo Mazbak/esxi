@@ -94,7 +94,7 @@
           <select v-model="form.datastore_name" :disabled="!form.esxi_server_id" required class="input-field">
             <option value="">{{ form.esxi_server_id ? 'Sélectionnez un datastore' : 'Sélectionnez d\'abord un serveur' }}</option>
             <option v-for="ds in datastores" :key="ds.name" :value="ds.name">
-              {{ ds.name }} ({{ formatSize(ds.free_space) }} libre / {{ formatSize(ds.capacity) }} total)
+              {{ ds.name }} ({{ ds.free_space }} GB libre / {{ ds.capacity }} GB total)
             </option>
           </select>
           <p class="mt-1 text-sm text-gray-500">
@@ -105,12 +105,12 @@
         <!-- Réseau -->
         <div>
           <label class="label">Réseau (optionnel)</label>
-          <input
-            v-model="form.network_name"
-            type="text"
-            class="input-field"
-            placeholder="VM Network"
-          />
+          <select v-model="form.network_name" :disabled="!form.esxi_server_id" class="input-field">
+            <option value="VM Network">{{ form.esxi_server_id ? 'VM Network (défaut)' : 'Sélectionnez d\'abord un serveur' }}</option>
+            <option v-for="net in networks" :key="net.name" :value="net.name">
+              {{ net.name }}
+            </option>
+          </select>
           <p class="mt-1 text-sm text-gray-500">
             Réseau auquel connecter la VM (défaut: VM Network)
           </p>
@@ -315,7 +315,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useEsxiStore } from '@/stores/esxi'
 import { useToastStore } from '@/stores/toast'
-import { restoreAPI, storagePathsAPI } from '@/services/api'
+import { restoreAPI, storagePathsAPI, esxiServersAPI } from '@/services/api'
 
 const esxiStore = useEsxiStore()
 const toast = useToastStore()
@@ -324,6 +324,7 @@ const loading = ref(false)
 const error = ref(null)
 const success = ref(null)
 const datastores = ref([])
+const networks = ref([])
 const storagePaths = ref([])  // Chemins de sauvegarde prédéfinis
 const showFileBrowser = ref(false)
 const loadingFiles = ref(false)
@@ -353,16 +354,32 @@ async function loadDatastores() {
   if (!form.esxi_server_id) return
 
   try {
-    const selectedServer = servers.value.find(s => s.id === form.esxi_server_id)
-    if (selectedServer) {
-      // Charger les datastores du serveur sélectionné
-      await esxiStore.fetchDatastores({ server: selectedServer.id })
-      // Filtrer pour ne garder QUE les datastores du serveur sélectionné
-      datastores.value = (esxiStore.datastores || []).filter(ds => ds.server === selectedServer.id)
-    }
+    // Charger les datastores directement depuis l'API ESXi
+    const response = await esxiServersAPI.getDatastores(form.esxi_server_id)
+    datastores.value = response.data.datastores.map(ds => ({
+      name: ds.name,
+      capacity: ds.capacity_gb,
+      free_space: ds.free_space_gb
+    }))
+
+    // Charger également les réseaux
+    await loadNetworks()
   } catch (err) {
     console.error('Erreur chargement datastores:', err)
     toast.error('Erreur lors du chargement des datastores')
+  }
+}
+
+async function loadNetworks() {
+  if (!form.esxi_server_id) return
+
+  try {
+    // Charger les réseaux directement depuis l'API ESXi
+    const response = await esxiServersAPI.getNetworks(form.esxi_server_id)
+    networks.value = response.data.networks || []
+  } catch (err) {
+    console.error('Erreur chargement réseaux:', err)
+    toast.error('Erreur lors du chargement des réseaux')
   }
 }
 
@@ -387,8 +404,8 @@ async function handleRestore() {
       throw new Error('Serveur ESXi introuvable')
     }
 
-    // Appeler l'API (à adapter selon votre backend)
-    const response = await restoreAPI.restoreOVF(selectedServer.id, payload)
+    // Appeler l'API de restauration OVF sur le serveur ESXi
+    const response = await esxiServersAPI.restoreOVF(selectedServer.id, payload)
 
     success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
     toast.success(`VM "${form.vm_name}" restaurée avec succès !`, 5000)
