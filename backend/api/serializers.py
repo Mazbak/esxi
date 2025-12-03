@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo
+from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo, EmailSettings
 from backups.models import (
     BackupConfiguration, BackupJob, BackupSchedule,
     SnapshotSchedule, Snapshot, RemoteStorageConfig,
@@ -508,12 +508,12 @@ class BackupVerificationSerializer(serializers.ModelSerializer):
 
 class BackupVerificationScheduleSerializer(serializers.ModelSerializer):
     """Serializer pour les planifications de vérifications"""
-    
+
     vm_name = serializers.CharField(source='virtual_machine.name', read_only=True, allow_null=True)
     server_name = serializers.CharField(source='esxi_server.name', read_only=True)
     frequency_display = serializers.CharField(source='get_frequency_display', read_only=True)
     test_type_display = serializers.CharField(source='get_test_type_display', read_only=True)
-    
+
     class Meta:
         model = BackupVerificationSchedule
         fields = [
@@ -523,3 +523,22 @@ class BackupVerificationScheduleSerializer(serializers.ModelSerializer):
             'last_run_at', 'next_run_at', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'last_run_at', 'next_run_at']
+
+
+class EmailSettingsSerializer(serializers.ModelSerializer):
+    """Serializer pour les paramètres d'email"""
+
+    class Meta:
+        model = EmailSettings
+        fields = [
+            'id', 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_password',
+            'smtp_use_tls', 'smtp_use_ssl', 'from_email', 'admin_email',
+            'notify_backup_success', 'notify_backup_failure',
+            'notify_surebackup_success', 'notify_surebackup_failure',
+            'notify_replication_failure', 'email_notifications_enabled',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+        extra_kwargs = {
+            'smtp_password': {'write_only': True}  # Don't expose password in responses
+        }

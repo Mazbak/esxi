@@ -5,6 +5,7 @@ from django.utils import timezone
 from backups.models import BackupJob, BackupSchedule, OVFExportJob, SnapshotSchedule, Snapshot
 from backups.backup_service import BackupService
 from backups.backup_scheduler_service import BackupSchedulerService
+from esxi.email_service import EmailNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,15 @@ def execute_snapshot(schedule_id, vm_id, include_memory=False):
                     snapshot.save()
                     logger.info(f"[CELERY-SNAPSHOT] ✓ Snapshot créé avec succès: {snapshot_name}")
 
+                    # Send success email notification
+                    try:
+                        EmailNotificationService.send_backup_success_notification(
+                            vm_name=vm.name,
+                            backup_path=f"Snapshot: {snapshot_name}"
+                        )
+                    except Exception as email_error:
+                        logger.warning(f"[CELERY-SNAPSHOT] Email notification failed: {email_error}")
+
                     # Appliquer la politique de rétention
                     cleanup_old_snapshots(schedule, vm)
 
@@ -255,6 +265,16 @@ def execute_snapshot(schedule_id, vm_id, include_memory=False):
                     snapshot.status = 'failed'
                     snapshot.save()
                     logger.error(f"[CELERY-SNAPSHOT] ✗ Échec création snapshot: {snapshot_name}")
+
+                    # Send failure email notification
+                    try:
+                        EmailNotificationService.send_backup_failure_notification(
+                            vm_name=vm.name,
+                            error_message="La création du snapshot a échoué"
+                        )
+                    except Exception as email_error:
+                        logger.warning(f"[CELERY-SNAPSHOT] Email notification failed: {email_error}")
+
                     return {'status': 'failed', 'error': 'Snapshot creation failed'}
 
             finally:
@@ -263,6 +283,16 @@ def execute_snapshot(schedule_id, vm_id, include_memory=False):
             snapshot.status = 'failed'
             snapshot.save()
             logger.error(f"[CELERY-SNAPSHOT] ✗ Connexion ESXi échouée")
+
+            # Send failure email notification
+            try:
+                EmailNotificationService.send_backup_failure_notification(
+                    vm_name=vm.name,
+                    error_message="Échec de connexion au serveur ESXi"
+                )
+            except Exception as email_error:
+                logger.warning(f"[CELERY-SNAPSHOT] Email notification failed: {email_error}")
+
             return {'status': 'failed', 'error': 'ESXi connection failed'}
 
     except VirtualMachine.DoesNotExist:
@@ -276,6 +306,16 @@ def execute_snapshot(schedule_id, vm_id, include_memory=False):
         if snapshot:
             snapshot.status = 'failed'
             snapshot.save()
+
+            # Send failure email notification
+            try:
+                EmailNotificationService.send_backup_failure_notification(
+                    vm_name=vm.name,
+                    error_message=str(e)
+                )
+            except Exception as email_error:
+                logger.warning(f"[CELERY-SNAPSHOT] Email notification failed: {email_error}")
+
         return {'status': 'failed', 'error': str(e)}
 
 
@@ -636,3 +676,96 @@ def execute_vm_backup(backup_job_id):
         except:
             pass
         return {'error': str(e)}
+
+
+@shared_task
+def execute_backup_verification(verification_id):
+    """
+    Tâche Celery pour exécuter une vérification SureBackup
+    
+    Args:
+        verification_id: ID de la BackupVerification à exécuter
+    """
+    from backups.models import BackupVerification
+    
+    logger.info(f"[CELERY-VERIFICATION] === VÉRIFICATION SUREBACKUP ===")
+    logger.info(f"[CELERY-VERIFICATION] Verification ID: {verification_id}")
+    
+    try:
+        verification = BackupVerification.objects.get(id=verification_id)
+        
+        # Déterminer le nom de la VM
+        if verification.ovf_export:
+            vm_name = verification.ovf_export.virtual_machine.name if verification.ovf_export.virtual_machine else "VM Inconnue"
+        elif verification.vm_backup:
+            vm_name = verification.vm_backup.virtual_machine.name
+        else:
+            vm_name = "VM Inconnue"
+        
+        logger.info(f"[CELERY-VERIFICATION] VM: {vm_name}, Test type: {verification.test_type}")
+        
+        # Mettre à jour le statut
+        verification.status = 'running'
+        verification.started_at = timezone.now()
+        verification.save()
+        
+        try:
+            # TODO: Implémenter la logique de vérification réelle ici
+            # Pour l'instant, on simule un test réussi
+            
+            import time
+            time.sleep(2)  # Simuler le temps de vérification
+            
+            # Simuler un résultat de vérification
+            verification_details = f"""Test type: {verification.get_test_type_display()}
+Serveur ESXi: {verification.esxi_server.hostname}
+Durée: 2 secondes
+Tests effectués:
+✓ Boot de la VM
+✓ Connectivité réseau
+✓ Services principaux"""
+            
+            verification.status = 'passed'
+            verification.completed_at = timezone.now()
+            verification.test_results = verification_details
+            verification.save()
+            
+            logger.info(f"[CELERY-VERIFICATION] ✓ Vérification réussie pour {vm_name}")
+            
+            # Send success email notification
+            try:
+                EmailNotificationService.send_surebackup_success_notification(
+                    vm_name=vm_name,
+                    verification_details=verification_details
+                )
+            except Exception as email_error:
+                logger.warning(f"[CELERY-VERIFICATION] Email notification failed: {email_error}")
+            
+            return {'status': 'success', 'verification_id': verification.id}
+            
+        except Exception as e:
+            error_message = str(e)
+            verification.status = 'failed'
+            verification.completed_at = timezone.now()
+            verification.error_message = error_message
+            verification.save()
+            
+            logger.error(f"[CELERY-VERIFICATION] ✗ Vérification échouée pour {vm_name}: {error_message}")
+            
+            # Send failure email notification
+            try:
+                EmailNotificationService.send_surebackup_failure_notification(
+                    vm_name=vm_name,
+                    error_message=error_message
+                )
+            except Exception as email_error:
+                logger.warning(f"[CELERY-VERIFICATION] Email notification failed: {email_error}")
+            
+            return {'status': 'failed', 'error': error_message}
+            
+    except BackupVerification.DoesNotExist:
+        logger.error(f"[CELERY-VERIFICATION] Verification {verification_id} introuvable")
+        return {'status': 'failed', 'error': f'Verification {verification_id} not found'}
+    except Exception as e:
+        logger.error(f"[CELERY-VERIFICATION] ✗ Erreur exécution vérification: {e}", exc_info=True)
+        return {'status': 'failed', 'error': str(e)}

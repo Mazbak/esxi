@@ -9,6 +9,7 @@ from .views import (
     OVFExportJobViewSet, VMBackupJobViewSet, StoragePathViewSet,
     VMReplicationViewSet, FailoverEventViewSet,
     BackupVerificationViewSet, BackupVerificationScheduleViewSet,
+    EmailSettingsViewSet,
     login_view, logout_view, current_user_view, prometheus_metrics
 )
 
@@ -35,6 +36,7 @@ router.register(r'vm-replications', VMReplicationViewSet, basename='vm-replicati
 router.register(r'failover-events', FailoverEventViewSet, basename='failover-events')
 router.register(r'backup-verifications', BackupVerificationViewSet, basename='backup-verifications')
 router.register(r'verification-schedules', BackupVerificationScheduleViewSet, basename='verification-schedules')
+router.register(r'email-settings', EmailSettingsViewSet, basename='email-settings')
 
 urlpatterns = [
     # Authentication endpoints
