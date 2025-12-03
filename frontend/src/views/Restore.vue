@@ -17,45 +17,43 @@
         <div>
           <label class="label">Fichier de sauvegarde (OVF ou OVA)</label>
 
-          <!-- Sélecteur de chemins prédéfinis -->
-          <div v-if="storagePaths.length > 0" class="mb-2">
-            <select
-              @change="selectStoragePath"
-              class="input-field text-sm"
-            >
-              <option value="">📁 Répertoire de sauvegarde prédéfini...</option>
-              <option
-                v-for="path in storagePaths"
-                :key="path.id"
-                :value="path.path"
+          <!-- Affichage du fichier sélectionné ou bouton de sélection -->
+          <div v-if="form.ovf_path" class="mb-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+                <div>
+                  <p class="font-medium text-gray-900">{{ selectedBackupName }}</p>
+                  <p class="text-sm text-gray-600">{{ form.ovf_path }}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                @click="clearSelection"
+                class="text-gray-400 hover:text-gray-600"
               >
-                {{ path.name }} - {{ path.path }}
-              </option>
-            </select>
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
-          <div class="flex gap-2">
-            <input
-              v-model="form.ovf_path"
-              type="text"
-              required
-              class="input-field flex-1"
-              placeholder="/backups/ma-vm.ova ou /backups/ma-vm/ma-vm.ovf"
-            />
-            <button
-              type="button"
-              @click="openFileBrowser"
-              class="btn-secondary flex items-center gap-2 whitespace-nowrap"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-              </svg>
-              Parcourir
-            </button>
-          </div>
-          <p class="mt-1 text-sm text-gray-500">
-            <span v-if="storagePaths.length > 0">Sélectionnez un répertoire prédéfini, cliquez sur "Parcourir" pour choisir un fichier, ou </span>
-            saisissez le chemin complet vers le fichier .ova ou .ovf à restaurer
+          <button
+            type="button"
+            @click="openFileBrowser"
+            class="btn-secondary w-full flex items-center justify-center gap-2"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            {{ form.ovf_path ? 'Changer de sauvegarde' : 'Choisir la sauvegarde' }}
+          </button>
+
+          <p class="mt-2 text-sm text-gray-500">
+            Cliquez pour parcourir toutes les sauvegardes disponibles
           </p>
         </div>
 
@@ -214,16 +212,42 @@
     <div v-if="showFileBrowser" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
         <!-- Header -->
-        <div class="flex items-center justify-between p-6 border-b">
-          <h3 class="text-lg font-semibold text-gray-900">📁 Parcourir les sauvegardes</h3>
-          <button
-            @click="closeFileBrowser"
-            class="text-gray-400 hover:text-gray-600"
-          >
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+        <div class="p-6 border-b space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-gray-900">📁 Parcourir les sauvegardes</h3>
+            <button
+              @click="closeFileBrowser"
+              class="text-gray-400 hover:text-gray-600"
+            >
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Search Field -->
+          <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="Rechercher une sauvegarde par nom..."
+              class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+            />
+            <button
+              v-if="searchQuery"
+              @click="searchQuery = ''"
+              class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <!-- Content -->
@@ -236,17 +260,21 @@
             <span class="ml-3 text-gray-600">Chargement des fichiers...</span>
           </div>
 
-          <div v-else-if="backupFiles.length === 0" class="text-center py-12">
+          <div v-else-if="filteredBackupFiles.length === 0" class="text-center py-12">
             <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <p class="mt-4 text-gray-500">Aucun fichier de sauvegarde trouvé</p>
-            <p class="mt-2 text-sm text-gray-400">Vérifiez que les chemins de stockage sont configurés</p>
+            <p class="mt-4 text-gray-500">
+              {{ searchQuery ? 'Aucun résultat trouvé' : 'Aucun fichier de sauvegarde trouvé' }}
+            </p>
+            <p class="mt-2 text-sm text-gray-400">
+              {{ searchQuery ? 'Essayez avec un autre terme de recherche' : 'Vérifiez que les chemins de stockage sont configurés' }}
+            </p>
           </div>
 
           <div v-else class="space-y-2">
             <div
-              v-for="file in backupFiles"
+              v-for="file in filteredBackupFiles"
               :key="file.path"
               @click="selectBackupFile(file)"
               class="flex items-center justify-between p-4 border rounded-lg hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition"
@@ -285,7 +313,10 @@
         <!-- Footer -->
         <div class="flex items-center justify-between p-6 border-t bg-gray-50">
           <p class="text-sm text-gray-600">
-            {{ backupFiles.length }} fichier(s) trouvé(s)
+            {{ filteredBackupFiles.length }} fichier(s) trouvé(s)
+            <span v-if="searchQuery && filteredBackupFiles.length < backupFiles.length" class="text-gray-400">
+              sur {{ backupFiles.length }} au total
+            </span>
           </p>
           <div class="flex gap-3">
             <button
@@ -329,6 +360,7 @@ const storagePaths = ref([])  // Chemins de sauvegarde prédéfinis
 const showFileBrowser = ref(false)
 const loadingFiles = ref(false)
 const backupFiles = ref([])
+const searchQuery = ref('')
 
 const form = reactive({
   ovf_path: '',
@@ -340,6 +372,26 @@ const form = reactive({
 })
 
 const servers = computed(() => esxiStore.servers)
+
+// Computed property pour filtrer les sauvegardes selon la recherche
+const filteredBackupFiles = computed(() => {
+  if (!searchQuery.value.trim()) {
+    return backupFiles.value
+  }
+
+  const query = searchQuery.value.toLowerCase()
+  return backupFiles.value.filter(file =>
+    file.name.toLowerCase().includes(query) ||
+    file.path.toLowerCase().includes(query)
+  )
+})
+
+// Computed property pour le nom du fichier sélectionné
+const selectedBackupName = computed(() => {
+  if (!form.ovf_path) return ''
+  const file = backupFiles.value.find(f => f.path === form.ovf_path)
+  return file ? file.name : form.ovf_path.split('/').pop()
+})
 
 onMounted(async () => {
   // Charger les serveurs ESXi
@@ -474,6 +526,7 @@ async function openFileBrowser() {
   showFileBrowser.value = true
   loadingFiles.value = true
   backupFiles.value = []
+  searchQuery.value = ''  // Reset search query
 
   try {
     const response = await restoreAPI.listBackupFiles()
@@ -488,6 +541,11 @@ async function openFileBrowser() {
 
 function closeFileBrowser() {
   showFileBrowser.value = false
+  searchQuery.value = ''  // Reset search query on close
+}
+
+function clearSelection() {
+  form.ovf_path = ''
 }
 
 function selectBackupFile(file) {

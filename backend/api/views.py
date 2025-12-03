@@ -279,45 +279,74 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
 
         # Vérifier que le fichier existe
         import os
+        import tarfile
+        import tempfile
+        import shutil
+
         if not os.path.exists(ovf_path):
             return Response(
                 {'status': 'error', 'message': f'Fichier introuvable: {ovf_path}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        temp_dir = None
         try:
-            from backups.restore.vm_restore import VMRestoreService
+            logger.info(f"[RESTORE] Début de la restauration: {ovf_path} vers {server.hostname}")
 
-            restore_service = VMRestoreService(
+            # Si c'est un fichier OVA, l'extraire d'abord
+            actual_ovf_path = ovf_path
+            if ovf_path.lower().endswith('.ova'):
+                logger.info(f"[RESTORE] Extraction du fichier OVA...")
+                temp_dir = tempfile.mkdtemp(prefix='ova_extract_')
+
+                # Extraire le contenu de l'OVA (fichier TAR)
+                with tarfile.open(ovf_path, 'r') as tar:
+                    tar.extractall(path=temp_dir)
+
+                # Trouver le fichier .ovf dans le répertoire extrait
+                ovf_files = [f for f in os.listdir(temp_dir) if f.endswith('.ovf')]
+                if not ovf_files:
+                    raise Exception("Aucun fichier OVF trouvé dans l'archive OVA")
+
+                actual_ovf_path = os.path.join(temp_dir, ovf_files[0])
+                logger.info(f"[RESTORE] Fichier OVF extrait: {actual_ovf_path}")
+
+            # Connexion au serveur ESXi
+            vmware = VMwareService(
                 host=server.hostname,
                 user=server.username,
                 password=server.password,
                 port=server.port
             )
 
-            logger.info(f"[RESTORE] Début de la restauration: {ovf_path} vers {server.hostname}")
+            if not vmware.connect():
+                raise Exception("Impossible de se connecter au serveur ESXi")
 
-            result = restore_service.restore_vm(
-                ovf_path=ovf_path,
-                vm_name=vm_name,
-                datastore_name=datastore_name,
-                network_name=network_name,
-                power_on=power_on
-            )
-
-            if result.get('success'):
-                logger.info(f"[RESTORE] Restauration réussie: {vm_name}")
-                return Response({
-                    'status': 'success',
-                    'message': f'VM {vm_name} restaurée avec succès',
-                    'vm_info': result.get('vm_info', {})
-                })
-            else:
-                logger.error(f"[RESTORE] Échec de la restauration: {result.get('error')}")
-                return Response(
-                    {'status': 'error', 'message': result.get('error', 'Échec de la restauration')},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            try:
+                # Déployer l'OVF
+                logger.info(f"[RESTORE] Déploiement de l'OVF sur {datastore_name}...")
+                success = vmware.deploy_ovf(
+                    ovf_path=actual_ovf_path,
+                    vm_name=vm_name,
+                    datastore_name=datastore_name,
+                    network_name=network_name,
+                    power_on=power_on
                 )
+
+                if success:
+                    logger.info(f"[RESTORE] Restauration réussie: {vm_name}")
+                    return Response({
+                        'status': 'success',
+                        'message': f'VM {vm_name} restaurée avec succès'
+                    })
+                else:
+                    logger.error(f"[RESTORE] Échec du déploiement OVF")
+                    return Response(
+                        {'status': 'error', 'message': 'Échec du déploiement OVF'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+            finally:
+                vmware.disconnect()
 
         except Exception as e:
             logger.exception(f"[RESTORE] Erreur lors de la restauration: {str(e)}")
@@ -325,6 +354,14 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
                 {'status': 'error', 'message': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        finally:
+            # Nettoyer le répertoire temporaire
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"[RESTORE] Répertoire temporaire nettoyé: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"[RESTORE] Impossible de nettoyer {temp_dir}: {e}")
 
 
 # ==========================================================
