@@ -246,8 +246,6 @@ class OVFExportLeaseService:
             # Step 5: Convert to OVA if requested
             if hasattr(self.export_job, 'export_format') and self.export_job.export_format == 'ova':
                 logger.info(f"[OVF-EXPORT] Step 5/5: Converting to OVA format...")
-                self.export_job.progress_percentage = 99
-                self.export_job.save()
 
                 ova_path = self._convert_to_ova(export_dir, downloaded_files)
                 if ova_path:
@@ -256,6 +254,10 @@ class OVFExportLeaseService:
                     self.export_job.export_full_path = ova_path
                     ova_size_mb = os.path.getsize(ova_path) / (1024 * 1024)
                     self.export_job.export_size_mb = ova_size_mb
+                    # Ensure progress stays at 100% after OVA conversion
+                    self.export_job.progress_percentage = 100
+                    self.export_job.status = 'completed'
+                    self.export_job.save()
                     logger.info(f"[OVF-EXPORT] OVA size: {ova_size_mb:.2f} MB")
 
             # Validation: Compare estimated vs actual size
