@@ -37,7 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    
+
     'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
@@ -45,8 +45,9 @@ INSTALLED_APPS = [
     'esxi',        # 👈 Ajoute cette ligne
     'backups',     # 👈 Si tu as aussi cette app
     'api',         # 👈 Et ton app api
+    'tenants',     # 👈 Multi-tenant SaaS app
 
- 
+
 
 ]
 
@@ -59,6 +60,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'tenants.middleware.TenantMiddleware',        # 👈 Tenant detection
+    'tenants.middleware.TenantAccessMiddleware',  # 👈 Subscription verification
 ]
 
 ROOT_URLCONF = 'sauvegarde.urls'
@@ -212,3 +215,29 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Europe/Paris'
 CELERY_ENABLE_UTC = True
+
+# ==========================================================
+# Multi-Tenant SaaS Configuration
+# ==========================================================
+
+# PayPal Configuration
+PAYPAL_MODE = 'sandbox'  # 'sandbox' or 'live'
+PAYPAL_CLIENT_ID = 'your-paypal-client-id'  # TODO: Add your PayPal Client ID
+PAYPAL_CLIENT_SECRET = 'your-paypal-client-secret'  # TODO: Add your PayPal Secret
+
+# MTN Mobile Money Configuration
+MTN_MOMO_ENVIRONMENT = 'sandbox'  # 'sandbox' or 'production'
+MTN_MOMO_SUBSCRIPTION_KEY = 'your-mtn-subscription-key'  # TODO: Add your MTN key
+MTN_MOMO_USER_ID = 'your-mtn-user-id'  # TODO: Add your MTN User ID
+MTN_MOMO_API_KEY = 'your-mtn-api-key'  # TODO: Add your MTN API key
+
+# Bank Transfer Configuration
+BANK_NAME = 'Votre Banque'
+BANK_ACCOUNT_NAME = 'ESXi Backup Manager SAS'
+BANK_ACCOUNT_NUMBER = 'XXXXXXXXXXXX'
+BANK_SWIFT_CODE = 'XXXXXXXX'
+BANK_IBAN = 'XX XX XXXX XXXX XXXX XXXX XXXX XXX'
+BANK_BRANCH = 'Agence Principale'
+
+# Application URL (for emails)
+APP_BASE_URL = 'http://localhost:5173'  # Frontend URL
