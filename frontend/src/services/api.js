@@ -305,4 +305,13 @@ export const verificationSchedulesAPI = {
   toggleActive: (id) => apiClient.post(`/verification-schedules/${id}/toggle_active/`),
 }
 
+// ===========================
+// EMAIL SETTINGS API
+// ===========================
+export const emailSettingsAPI = {
+  getSettings: () => apiClient.get('/email-settings/'),
+  updateSettings: (data) => apiClient.put('/email-settings/1/', data),
+  testEmail: (recipientEmail) => apiClient.post('/email-settings/test_email/', { recipient_email: recipientEmail }),
+}
+
 export default apiClient

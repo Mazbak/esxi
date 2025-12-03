@@ -16,7 +16,8 @@ from django.shortcuts import get_object_or_404
 
 logger = logging.getLogger(__name__)
 
-from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo
+from esxi.models import ESXiServer, VirtualMachine, DatastoreInfo, EmailSettings
+from esxi.email_service import EmailNotificationService
 from backups.models import (
     BackupConfiguration, BackupJob, BackupLog,
     BackupSchedule, SnapshotSchedule, Snapshot,
@@ -38,9 +39,10 @@ from api.serializers import (
     ListFilesSerializer, SearchFilesSerializer, ValidateRestoreSerializer,
     NotificationConfigSerializer, NotificationLogSerializer, TestNotificationSerializer,
     StoragePathSerializer, VMReplicationSerializer, FailoverEventSerializer,
-    BackupVerificationSerializer, BackupVerificationScheduleSerializer
+    BackupVerificationSerializer, BackupVerificationScheduleSerializer,
+    EmailSettingsSerializer
 )
-from backups.tasks import execute_backup_job  # Celery task
+from backups.tasks import execute_backup_job, execute_backup_verification  # Celery tasks
 
 
 # ==========================================================
@@ -2683,19 +2685,16 @@ class BackupVerificationViewSet(viewsets.ModelViewSet):
     def start_verification(self, request, pk=None):
         """Démarrer une vérification manuellement"""
         verification = self.get_object()
-        
+
         if verification.status != 'pending':
             return Response(
                 {'error': 'La vérification a déjà été démarrée'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        verification.status = 'running'
-        verification.started_at = timezone.now()
-        verification.save()
-        
-        # TODO: Lancer le service de vérification
-        
+
+        # Lancer le service de vérification de manière asynchrone
+        execute_backup_verification.delay(verification.id)
+
         serializer = self.get_serializer(verification)
         return Response(serializer.data)
     
@@ -2887,3 +2886,79 @@ def prometheus_metrics(request):
     
     from django.http import HttpResponse
     return HttpResponse(response_text, content_type='text/plain; version=0.0.4')
+
+
+
+# ==========================================================
+# 🔹 EMAIL SETTINGS
+# ==========================================================
+class EmailSettingsViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing email notification settings.
+    Only one instance exists (singleton pattern).
+    """
+    queryset = EmailSettings.objects.all()
+    serializer_class = EmailSettingsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        """Get the email settings (singleton)"""
+        settings = EmailSettings.get_settings()
+        serializer = self.get_serializer(settings)
+        return Response(serializer.data)
+
+    def create(self, request):
+        """Override create to update existing settings instead"""
+        settings = EmailSettings.get_settings()
+        serializer = self.get_serializer(settings, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def update(self, request, pk=None):
+        """Update email settings"""
+        settings = EmailSettings.get_settings()
+        serializer = self.get_serializer(settings, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        logger.info(f"[EMAIL] Settings updated: {settings}")
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["post"])
+    def test_email(self, request):
+        """Send a test email to verify SMTP configuration"""
+        try:
+            recipient_email = request.data.get("recipient_email")
+            
+            if not recipient_email:
+                # Use admin email if no recipient specified
+                settings = EmailSettings.get_settings()
+                recipient_email = settings.admin_email
+
+            if not recipient_email:
+                return Response(
+                    {"status": "error", "message": "Aucun email destinataire spécifié"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Send test email
+            success = EmailNotificationService.send_test_email(recipient_email)
+
+            if success:
+                return Response({
+                    "status": "success",
+                    "message": f"Email de test envoyé à {recipient_email}"
+                })
+            else:
+                return Response(
+                    {"status": "error", "message": "Échec de l'envoi de l'email de test. Vérifiez les paramètres SMTP."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        except Exception as e:
+            logger.error(f"[EMAIL] Error sending test email: {str(e)}")
+            return Response(
+                {"status": "error", "message": f"Erreur: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
