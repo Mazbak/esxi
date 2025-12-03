@@ -23,10 +23,10 @@ app.conf.beat_schedule = {
         'task': 'backups.tasks.check_and_execute_schedules',
         'schedule': crontab(minute=0),  # Toutes les heures à la minute 0
     },
-    # Vérifier et exécuter les schedules de snapshot toutes les heures
+    # Vérifier et exécuter les schedules de snapshot toutes les minutes
     'check-and-execute-snapshot-schedules': {
         'task': 'backups.tasks.check_and_execute_snapshot_schedules',
-        'schedule': crontab(minute=0),  # Toutes les heures à la minute 0
+        'schedule': crontab(minute='*'),  # Toutes les minutes
     },
     # Nettoyer les anciens backups tous les jours à 3h du matin
     'cleanup-old-backups': {
