@@ -209,6 +209,123 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
             'datastores_count': len(datastores_data)
         })
 
+    @action(detail=True, methods=['get'])
+    def get_datastores(self, request, pk=None):
+        """Récupère les datastores disponibles pour ce serveur ESXi"""
+        server = self.get_object()
+        vmware = VMwareService(
+            host=server.hostname,
+            user=server.username,
+            password=server.password,
+            port=server.port
+        )
+
+        if not vmware.connect():
+            return Response(
+                {'status': 'error', 'message': 'Échec de la connexion à ESXi'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        datastores = vmware.get_datastores()
+        vmware.disconnect()
+
+        return Response({
+            'status': 'success',
+            'datastores': datastores
+        })
+
+    @action(detail=True, methods=['get'])
+    def get_networks(self, request, pk=None):
+        """Récupère les réseaux disponibles pour ce serveur ESXi"""
+        server = self.get_object()
+        vmware = VMwareService(
+            host=server.hostname,
+            user=server.username,
+            password=server.password,
+            port=server.port
+        )
+
+        if not vmware.connect():
+            return Response(
+                {'status': 'error', 'message': 'Échec de la connexion à ESXi'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        networks = vmware.get_networks()
+        vmware.disconnect()
+
+        return Response({
+            'status': 'success',
+            'networks': networks
+        })
+
+    @action(detail=True, methods=['post'])
+    def restore_ovf(self, request, pk=None):
+        """Restaure un fichier OVF/OVA sur ce serveur ESXi"""
+        server = self.get_object()
+
+        # Récupérer les paramètres
+        ovf_path = request.data.get('ovf_path')
+        vm_name = request.data.get('vm_name')
+        datastore_name = request.data.get('datastore_name')
+        network_name = request.data.get('network_name', 'VM Network')
+        power_on = request.data.get('power_on', False)
+
+        if not ovf_path or not vm_name or not datastore_name:
+            return Response(
+                {'status': 'error', 'message': 'Paramètres manquants (ovf_path, vm_name, datastore_name requis)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Vérifier que le fichier existe
+        import os
+        if not os.path.exists(ovf_path):
+            return Response(
+                {'status': 'error', 'message': f'Fichier introuvable: {ovf_path}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            from backups.restore.vm_restore import VMRestoreService
+
+            restore_service = VMRestoreService(
+                host=server.hostname,
+                user=server.username,
+                password=server.password,
+                port=server.port
+            )
+
+            logger.info(f"[RESTORE] Début de la restauration: {ovf_path} vers {server.hostname}")
+
+            result = restore_service.restore_vm(
+                ovf_path=ovf_path,
+                vm_name=vm_name,
+                datastore_name=datastore_name,
+                network_name=network_name,
+                power_on=power_on
+            )
+
+            if result.get('success'):
+                logger.info(f"[RESTORE] Restauration réussie: {vm_name}")
+                return Response({
+                    'status': 'success',
+                    'message': f'VM {vm_name} restaurée avec succès',
+                    'vm_info': result.get('vm_info', {})
+                })
+            else:
+                logger.error(f"[RESTORE] Échec de la restauration: {result.get('error')}")
+                return Response(
+                    {'status': 'error', 'message': result.get('error', 'Échec de la restauration')},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            logger.exception(f"[RESTORE] Erreur lors de la restauration: {str(e)}")
+            return Response(
+                {'status': 'error', 'message': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ==========================================================
 # 🔹 VIRTUAL MACHINES

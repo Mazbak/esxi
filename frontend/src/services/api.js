@@ -56,6 +56,9 @@ export const esxiServersAPI = {
   delete: (id) => apiClient.delete(`/esxi-servers/${id}/`),
   testConnection: (id) => apiClient.post(`/esxi-servers/${id}/test_connection/`),
   syncVMs: (id) => apiClient.post(`/esxi-servers/${id}/sync_vms/`),
+  getDatastores: (id) => apiClient.get(`/esxi-servers/${id}/get_datastores/`),
+  getNetworks: (id) => apiClient.get(`/esxi-servers/${id}/get_networks/`),
+  restoreOVF: (id, data) => apiClient.post(`/esxi-servers/${id}/restore_ovf/`, data),
 }
 
 // ===========================
