@@ -4,6 +4,7 @@ API Views for ESXi Backup Manager
 import logging
 import os
 from datetime import datetime
+from django.core.cache import cache
 from rest_framework import viewsets, status, permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action, api_view, permission_classes
@@ -325,26 +326,58 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
                 raise Exception("Impossible de se connecter au serveur ESXi")
 
             try:
-                # Déployer l'OVF
-                logger.info(f"[RESTORE] Déploiement de l'OVF sur {datastore_name}...")
+                # Générer un ID unique pour suivre la progression
+                import uuid
+                restore_id = str(uuid.uuid4())
+
+                # Initialiser la progression dans le cache
+                cache.set(f'restore_progress_{restore_id}', {
+                    'progress': 0,
+                    'status': 'starting',
+                    'message': 'Initialisation de la restauration...'
+                }, timeout=3600)  # 1 heure
+
+                # Callback pour mettre à jour la progression
+                def progress_callback(progress_percent):
+                    cache.set(f'restore_progress_{restore_id}', {
+                        'progress': progress_percent,
+                        'status': 'uploading',
+                        'message': f'Upload en cours: {progress_percent}%'
+                    }, timeout=3600)
+
+                # Déployer l'OVF avec callback de progression
+                logger.info(f"[RESTORE] Déploiement de l'OVF sur {datastore_name}... (ID: {restore_id})")
                 success = vmware.deploy_ovf(
                     ovf_path=actual_ovf_path,
                     vm_name=vm_name,
                     datastore_name=datastore_name,
                     network_name=network_name,
-                    power_on=power_on
+                    power_on=power_on,
+                    progress_callback=progress_callback
                 )
 
                 if success:
                     logger.info(f"[RESTORE] Restauration réussie: {vm_name}")
+                    # Marquer comme complété
+                    cache.set(f'restore_progress_{restore_id}', {
+                        'progress': 100,
+                        'status': 'completed',
+                        'message': 'Restauration terminée avec succès'
+                    }, timeout=3600)
                     return Response({
                         'status': 'success',
-                        'message': f'VM {vm_name} restaurée avec succès'
+                        'message': f'VM {vm_name} restaurée avec succès',
+                        'restore_id': restore_id
                     })
                 else:
                     logger.error(f"[RESTORE] Échec du déploiement OVF")
+                    cache.set(f'restore_progress_{restore_id}', {
+                        'progress': 0,
+                        'status': 'error',
+                        'message': 'Échec du déploiement OVF'
+                    }, timeout=3600)
                     return Response(
-                        {'status': 'error', 'message': 'Échec du déploiement OVF'},
+                        {'status': 'error', 'message': 'Échec du déploiement OVF', 'restore_id': restore_id},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR
                     )
             finally:
@@ -364,6 +397,19 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
                     logger.info(f"[RESTORE] Répertoire temporaire nettoyé: {temp_dir}")
                 except Exception as e:
                     logger.warning(f"[RESTORE] Impossible de nettoyer {temp_dir}: {e}")
+
+    @action(detail=False, methods=['get'], url_path='restore-progress/(?P<restore_id>[^/.]+)')
+    def restore_progress(self, request, restore_id=None):
+        """Récupère la progression d'une restauration en cours"""
+        progress_data = cache.get(f'restore_progress_{restore_id}')
+
+        if progress_data is None:
+            return Response(
+                {'status': 'error', 'message': 'ID de restauration introuvable ou expiré'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        return Response(progress_data)
 
 
 # ==========================================================

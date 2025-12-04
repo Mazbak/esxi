@@ -148,6 +148,37 @@
           <p class="text-sm text-green-800">{{ success }}</p>
         </div>
 
+        <!-- Progress Display -->
+        <div v-if="isRestoring" class="p-6 bg-blue-50 border border-blue-200 rounded-lg space-y-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <div>
+                <p class="text-sm font-medium text-blue-900">Restauration en cours...</p>
+                <p class="text-xs text-blue-700 mt-1">{{ restoreMessage }}</p>
+              </div>
+            </div>
+            <span class="text-2xl font-bold text-blue-600">{{ restoreProgress }}%</span>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="w-full bg-blue-200 rounded-full h-3 overflow-hidden">
+            <div
+              class="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+              :style="{ width: restoreProgress + '%' }"
+            ></div>
+          </div>
+
+          <!-- Progress Details -->
+          <div class="flex items-center justify-between text-xs text-blue-700">
+            <span>{{ form.vm_name }}</span>
+            <span>{{ restoreStatus }}</span>
+          </div>
+        </div>
+
         <!-- Actions -->
         <div class="flex items-center gap-4">
           <button
@@ -361,6 +392,10 @@ const showFileBrowser = ref(false)
 const loadingFiles = ref(false)
 const backupFiles = ref([])
 const searchQuery = ref('')
+const restoreProgress = ref(0)
+const restoreStatus = ref('')
+const restoreMessage = ref('')
+const isRestoring = ref(false)
 
 const form = reactive({
   ovf_path: '',
@@ -439,6 +474,12 @@ async function handleRestore() {
   error.value = null
   success.value = null
   loading.value = true
+  isRestoring.value = true
+  restoreProgress.value = 0
+  restoreStatus.value = 'starting'
+  restoreMessage.value = 'Démarrage de la restauration...'
+
+  let pollInterval = null
 
   try {
     // Appeler l'API de restauration
@@ -459,15 +500,57 @@ async function handleRestore() {
     // Appeler l'API de restauration OVF sur le serveur ESXi
     const response = await esxiServersAPI.restoreOVF(selectedServer.id, payload)
 
-    success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
-    toast.success(`VM "${form.vm_name}" restaurée avec succès !`, 5000)
+    // Si on a un restore_id, démarrer le polling de la progression
+    if (response.data.restore_id) {
+      const restoreId = response.data.restore_id
 
-    // Réinitialiser le formulaire après succès
-    setTimeout(() => {
-      resetForm()
-    }, 2000)
+      // Polling toutes les 500ms pour récupérer la progression
+      pollInterval = setInterval(async () => {
+        try {
+          const progressResponse = await esxiServersAPI.getRestoreProgress(restoreId)
+          const progressData = progressResponse.data
+
+          restoreProgress.value = progressData.progress
+          restoreStatus.value = progressData.status
+          restoreMessage.value = progressData.message
+
+          // Arrêter le polling si terminé ou en erreur
+          if (progressData.status === 'completed' || progressData.status === 'error') {
+            clearInterval(pollInterval)
+            isRestoring.value = false
+
+            if (progressData.status === 'completed') {
+              success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
+              toast.success(`VM "${form.vm_name}" restaurée avec succès !`, 5000)
+
+              // Réinitialiser le formulaire après succès
+              setTimeout(() => {
+                resetForm()
+              }, 2000)
+            } else if (progressData.status === 'error') {
+              throw new Error(progressData.message)
+            }
+          }
+        } catch (pollErr) {
+          console.error('Erreur polling progression:', pollErr)
+          clearInterval(pollInterval)
+          isRestoring.value = false
+        }
+      }, 500)
+    } else {
+      // Pas de restore_id, succès immédiat (ancien comportement)
+      success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
+      toast.success(`VM "${form.vm_name}" restaurée avec succès !`, 5000)
+      isRestoring.value = false
+
+      setTimeout(() => {
+        resetForm()
+      }, 2000)
+    }
 
   } catch (err) {
+    if (pollInterval) clearInterval(pollInterval)
+    isRestoring.value = false
     error.value = err.response?.data?.error || err.message || 'Erreur lors de la restauration'
     toast.error(`Erreur: ${error.value}`)
   } finally {
@@ -485,6 +568,10 @@ function resetForm() {
   error.value = null
   success.value = null
   datastores.value = []
+  restoreProgress.value = 0
+  restoreStatus.value = ''
+  restoreMessage.value = ''
+  isRestoring.value = false
 }
 
 // Charger les chemins de sauvegarde prédéfinis (actifs uniquement)

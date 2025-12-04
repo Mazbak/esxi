@@ -436,13 +436,13 @@ class StoragePathSerializer(serializers.ModelSerializer):
 # ==========================================================
 class VMReplicationSerializer(serializers.ModelSerializer):
     """Serializer pour la réplication de VMs"""
-    
+
     vm_name = serializers.CharField(source='virtual_machine.name', read_only=True)
     source_server_name = serializers.CharField(source='source_server.name', read_only=True)
     destination_server_name = serializers.CharField(source='destination_server.name', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     failover_mode_display = serializers.CharField(source='get_failover_mode_display', read_only=True)
-    
+
     class Meta:
         model = VMReplication
         fields = [
@@ -455,8 +455,11 @@ class VMReplicationSerializer(serializers.ModelSerializer):
             'last_replication_duration_seconds', 'total_replicated_size_mb',
             'is_active', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'last_replication_at', 
+        read_only_fields = ['created_at', 'updated_at', 'last_replication_at',
                             'last_replication_duration_seconds', 'total_replicated_size_mb']
+        extra_kwargs = {
+            'source_server': {'required': False, 'allow_null': True}
+        }
 
 
 class FailoverEventSerializer(serializers.ModelSerializer):
