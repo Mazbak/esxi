@@ -1151,7 +1151,9 @@ class VMwareService:
             # Créer les spécifications d'import
             spec_params = vim.OvfManager.CreateImportSpecParams()
             spec_params.entityName = vm_name
-            spec_params.diskProvisioning = "thin"  # thin, thick, etc.
+            # NE PAS forcer diskProvisioning - laisser ESXi décider selon le format OVF
+            # spec_params.diskProvisioning = "thin"  # Commenté - causait problème avec streamOptimized
+            logger.info("[DEPLOY] Disk provisioning: AUTO (non spécifié, ESXi décidera)")
 
             # Mapping réseau
             network_mapping = vim.OvfManager.NetworkMapping()
@@ -1173,12 +1175,25 @@ class VMwareService:
             # Vérifier les erreurs
             if import_spec.error:
                 errors = [str(e.msg) for e in import_spec.error]
-                logger.error(f"[DEPLOY] Erreurs lors de la création des spécifications: {errors}")
+                logger.error(f"[DEPLOY] ⚠️ ERREURS lors de la création des spécifications: {errors}")
                 return False
 
             if import_spec.warning:
                 warnings = [str(w.msg) for w in import_spec.warning]
-                logger.warning(f"[DEPLOY] Avertissements: {warnings}")
+                logger.warning(f"[DEPLOY] ⚠️ WARNINGS lors de la création des spécifications: {warnings}")
+
+            # DEBUG: Vérifier ce qui est dans importSpec
+            logger.info(f"[DEPLOY] ImportSpec créé:")
+            if hasattr(import_spec, 'importSpec'):
+                logger.info(f"[DEPLOY]   - ConfigSpec présent: {import_spec.importSpec.configSpec is not None}")
+                if hasattr(import_spec.importSpec, 'configSpec') and import_spec.importSpec.configSpec:
+                    logger.info(f"[DEPLOY]   - Nom VM: {import_spec.importSpec.configSpec.name}")
+                    if hasattr(import_spec.importSpec.configSpec, 'deviceChange'):
+                        num_devices = len(import_spec.importSpec.configSpec.deviceChange) if import_spec.importSpec.configSpec.deviceChange else 0
+                        logger.info(f"[DEPLOY]   - Nombre de deviceChanges: {num_devices}")
+                        if num_devices > 0:
+                            for idx, dev_change in enumerate(import_spec.importSpec.configSpec.deviceChange):
+                                logger.info(f"[DEPLOY]     Device {idx+1}: {type(dev_change.device).__name__}")
 
             if progress_callback:
                 progress_callback(20)
