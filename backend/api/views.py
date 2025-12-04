@@ -325,68 +325,85 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
             if not vmware.connect():
                 raise Exception("Impossible de se connecter au serveur ESXi")
 
-            try:
-                # Générer un ID unique pour suivre la progression
-                import uuid
-                restore_id = str(uuid.uuid4())
+            # Générer un ID unique pour suivre la progression
+            import uuid
+            import threading
+            restore_id = str(uuid.uuid4())
 
-                # Initialiser la progression dans le cache
-                cache.set(f'restore_progress_{restore_id}', {
-                    'progress': 0,
-                    'status': 'starting',
-                    'message': 'Initialisation de la restauration...'
-                }, timeout=3600)  # 1 heure
+            # Initialiser la progression dans le cache
+            cache.set(f'restore_progress_{restore_id}', {
+                'progress': 0,
+                'status': 'starting',
+                'message': 'Initialisation de la restauration...'
+            }, timeout=3600)  # 1 heure
 
-                # Callback pour mettre à jour la progression
-                def progress_callback(progress_percent):
-                    try:
-                        progress_data = {
-                            'progress': progress_percent,
-                            'status': 'uploading' if progress_percent < 100 else 'completing',
-                            'message': f'Upload en cours: {progress_percent}%' if progress_percent < 100 else 'Finalisation...'
-                        }
-                        cache.set(f'restore_progress_{restore_id}', progress_data, timeout=3600)
-                        logger.info(f"[RESTORE] Progression mise à jour: {progress_percent}% (ID: {restore_id})")
-                    except Exception as e:
-                        logger.error(f"[RESTORE] Erreur mise à jour progression: {e}")
+            # Callback pour mettre à jour la progression
+            def progress_callback(progress_percent):
+                try:
+                    progress_data = {
+                        'progress': progress_percent,
+                        'status': 'uploading' if progress_percent < 100 else 'completing',
+                        'message': f'Upload en cours: {progress_percent}%' if progress_percent < 100 else 'Finalisation...'
+                    }
+                    cache.set(f'restore_progress_{restore_id}', progress_data, timeout=3600)
+                    logger.info(f"[RESTORE] Progression mise à jour: {progress_percent}% (ID: {restore_id})")
+                except Exception as e:
+                    logger.error(f"[RESTORE] Erreur mise à jour progression: {e}")
 
-                # Déployer l'OVF avec callback de progression
-                logger.info(f"[RESTORE] Déploiement de l'OVF sur {datastore_name}... (ID: {restore_id})")
-                success = vmware.deploy_ovf(
-                    ovf_path=actual_ovf_path,
-                    vm_name=vm_name,
-                    datastore_name=datastore_name,
-                    network_name=network_name,
-                    power_on=power_on,
-                    progress_callback=progress_callback
-                )
+            # Fonction pour exécuter le déploiement en arrière-plan
+            def deploy_in_background():
+                try:
+                    logger.info(f"[RESTORE] Déploiement de l'OVF sur {datastore_name}... (ID: {restore_id})")
+                    success = vmware.deploy_ovf(
+                        ovf_path=actual_ovf_path,
+                        vm_name=vm_name,
+                        datastore_name=datastore_name,
+                        network_name=network_name,
+                        power_on=power_on,
+                        progress_callback=progress_callback
+                    )
 
-                if success:
-                    logger.info(f"[RESTORE] Restauration réussie: {vm_name}")
-                    # Marquer comme complété
-                    cache.set(f'restore_progress_{restore_id}', {
-                        'progress': 100,
-                        'status': 'completed',
-                        'message': 'Restauration terminée avec succès'
-                    }, timeout=3600)
-                    return Response({
-                        'status': 'success',
-                        'message': f'VM {vm_name} restaurée avec succès',
-                        'restore_id': restore_id
-                    })
-                else:
-                    logger.error(f"[RESTORE] Échec du déploiement OVF")
+                    if success:
+                        logger.info(f"[RESTORE] Restauration réussie: {vm_name}")
+                        cache.set(f'restore_progress_{restore_id}', {
+                            'progress': 100,
+                            'status': 'completed',
+                            'message': 'Restauration terminée avec succès'
+                        }, timeout=3600)
+                    else:
+                        logger.error(f"[RESTORE] Échec du déploiement OVF")
+                        cache.set(f'restore_progress_{restore_id}', {
+                            'progress': 0,
+                            'status': 'error',
+                            'message': 'Échec du déploiement OVF'
+                        }, timeout=3600)
+                except Exception as e:
+                    logger.exception(f"[RESTORE] Erreur dans le thread: {e}")
                     cache.set(f'restore_progress_{restore_id}', {
                         'progress': 0,
                         'status': 'error',
-                        'message': 'Échec du déploiement OVF'
+                        'message': f'Erreur: {str(e)}'
                     }, timeout=3600)
-                    return Response(
-                        {'status': 'error', 'message': 'Échec du déploiement OVF', 'restore_id': restore_id},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
-            finally:
-                vmware.disconnect()
+                finally:
+                    vmware.disconnect()
+                    # Nettoyer le répertoire temporaire
+                    if temp_dir and os.path.exists(temp_dir):
+                        try:
+                            shutil.rmtree(temp_dir)
+                            logger.info(f"[RESTORE] Répertoire temporaire nettoyé: {temp_dir}")
+                        except Exception as e:
+                            logger.warning(f"[RESTORE] Impossible de nettoyer {temp_dir}: {e}")
+
+            # Lancer le déploiement dans un thread séparé
+            thread = threading.Thread(target=deploy_in_background, daemon=True)
+            thread.start()
+
+            # Retourner immédiatement avec le restore_id
+            return Response({
+                'status': 'started',
+                'message': 'Restauration démarrée en arrière-plan',
+                'restore_id': restore_id
+            })
 
         except Exception as e:
             logger.exception(f"[RESTORE] Erreur lors de la restauration: {str(e)}")
@@ -403,14 +420,7 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
                 {'status': 'error', 'message': str(e), 'restore_id': locals().get('restore_id')},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        finally:
-            # Nettoyer le répertoire temporaire
-            if temp_dir and os.path.exists(temp_dir):
-                try:
-                    shutil.rmtree(temp_dir)
-                    logger.info(f"[RESTORE] Répertoire temporaire nettoyé: {temp_dir}")
-                except Exception as e:
-                    logger.warning(f"[RESTORE] Impossible de nettoyer {temp_dir}: {e}")
+        # Note: Le nettoyage du répertoire temporaire se fait dans le thread en arrière-plan
 
     @action(detail=False, methods=['get'], url_path='restore-progress/(?P<restore_id>[^/.]+)')
     def restore_progress(self, request, restore_id=None):
