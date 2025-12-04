@@ -1206,30 +1206,75 @@ class VMwareService:
             ovf_dir = os.path.dirname(ovf_path)
             files_to_upload = []
 
-            for device_url in lease_info.deviceUrl:
-                # device_url.importKey correspond au fichier à uploader
-                import_key = device_url.importKey
+            # D'abord, lister tous les fichiers VMDK disponibles
+            vmdk_files = {}
+            for file_name in os.listdir(ovf_dir):
+                if file_name.endswith('.vmdk'):
+                    file_path = os.path.join(ovf_dir, file_name)
+                    vmdk_files[file_name] = {
+                        'path': file_path,
+                        'size': os.path.getsize(file_path)
+                    }
 
+            logger.info(f"[DEPLOY] Fichiers VMDK trouvés: {list(vmdk_files.keys())}")
+
+            # Ensuite, mapper chaque device_url au bon fichier
+            for device_url in lease_info.deviceUrl:
+                import_key = device_url.importKey
                 logger.info(f"[DEPLOY] Device URL: {device_url.url}, ImportKey: {import_key}")
 
-                # Chercher le fichier correspondant dans le répertoire OVF
-                # Le importKey contient généralement le nom du disque (ex: "disk-0")
-                for file_name in os.listdir(ovf_dir):
-                    # Ne traiter que les fichiers VMDK (pas les NVRAM ou autres)
-                    if file_name.endswith('.vmdk') and '-disk-' in file_name.lower():
-                        # Vérifier que ce fichier n'a pas déjà été ajouté
-                        file_path = os.path.join(ovf_dir, file_name)
-                        if not any(f['path'] == file_path for f in files_to_upload):
-                            file_size = os.path.getsize(file_path)
-                            files_to_upload.append({
-                                'path': file_path,
-                                'size': file_size,
-                                'url': device_url.url.replace('*', self.host),
-                                'device_url': device_url
-                            })
-                            total_bytes_to_upload += file_size
-                            logger.info(f"[DEPLOY] Ajouté: {file_name} -> {device_url.url}")
+                # FILTRER : Ignorer les device_url qui ne sont PAS pour des disques VMDK
+                # ImportKey contient généralement "/vmname/disk-X" pour les disques
+                # et "/vmname/nvram" pour NVRAM
+                if 'nvram' in import_key.lower():
+                    logger.info(f"[DEPLOY] Ignoré (NVRAM): {import_key}")
+                    continue
+
+                if 'disk' not in import_key.lower():
+                    logger.info(f"[DEPLOY] Ignoré (pas un disque): {import_key}")
+                    continue
+
+                # Chercher le fichier VMDK correspondant
+                # L'importKey contient souvent "disk-0", "disk-1", etc.
+                matched_file = None
+                for file_name, file_info in vmdk_files.items():
+                    # Vérifier que ce fichier n'a pas déjà été mappé
+                    if any(f['path'] == file_info['path'] for f in files_to_upload):
+                        continue
+
+                    # Essayer de matcher par le numéro de disque dans l'importKey
+                    # Par exemple: importKey="/VM/disk-0" devrait matcher "VM-disk-0.vmdk"
+                    if 'disk-' in import_key.lower() and 'disk-' in file_name.lower():
+                        # Extraire le numéro de disque de l'importKey
+                        import_disk_num = import_key.lower().split('disk-')[-1].split('/')[0].split('.')[0]
+                        file_disk_num = file_name.lower().split('disk-')[-1].split('.')[0]
+
+                        if import_disk_num == file_disk_num:
+                            matched_file = (file_name, file_info)
+                            logger.info(f"[DEPLOY] Match trouvé: {file_name} <-> {import_key}")
                             break
+
+                # Si aucun match spécifique, prendre le premier VMDK non mappé
+                if not matched_file:
+                    for file_name, file_info in vmdk_files.items():
+                        if not any(f['path'] == file_info['path'] for f in files_to_upload):
+                            matched_file = (file_name, file_info)
+                            logger.info(f"[DEPLOY] Match générique: {file_name} <-> {import_key}")
+                            break
+
+                if matched_file:
+                    file_name, file_info = matched_file
+                    files_to_upload.append({
+                        'path': file_info['path'],
+                        'size': file_info['size'],
+                        'url': device_url.url.replace('*', self.host),
+                        'device_url': device_url,
+                        'import_key': import_key
+                    })
+                    total_bytes_to_upload += file_info['size']
+                    logger.info(f"[DEPLOY] ✓ Ajouté: {file_name} -> {device_url.url}")
+                else:
+                    logger.warning(f"[DEPLOY] ⚠ Aucun fichier VMDK disponible pour: {import_key}")
 
             logger.info(f"[DEPLOY] Fichiers à uploader: {len(files_to_upload)}")
             logger.info(f"[DEPLOY] Taille totale: {total_bytes_to_upload / (1024**3):.2f} GB")
