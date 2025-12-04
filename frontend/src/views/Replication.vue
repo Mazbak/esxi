@@ -85,9 +85,19 @@
     <div class="card">
       <h2 class="text-lg font-semibold text-gray-900 mb-4">Réplications Configurées</h2>
 
-      <div v-if="loading" class="text-center py-8">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-        <p class="mt-2 text-gray-500">Chargement...</p>
+      <!-- Skeleton Loader -->
+      <div v-if="loading" class="space-y-4 animate-pulse">
+        <div v-for="i in 3" :key="i" class="flex items-center space-x-4 p-4 bg-gray-50 rounded-lg">
+          <div class="flex-1 space-y-3">
+            <div class="h-4 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-3/4"></div>
+            <div class="h-3 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-1/2"></div>
+          </div>
+          <div class="flex space-x-2">
+            <div class="h-8 w-8 bg-gradient-to-r from-blue-200 to-blue-300 rounded-full"></div>
+            <div class="h-8 w-8 bg-gradient-to-r from-orange-200 to-orange-300 rounded-full"></div>
+            <div class="h-8 w-8 bg-gradient-to-r from-indigo-200 to-indigo-300 rounded-full"></div>
+          </div>
+        </div>
       </div>
 
       <div v-else-if="replications.length === 0" class="text-center py-12">
@@ -144,11 +154,16 @@
               <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                 <button
                   @click="startReplication(replication)"
-                  :disabled="!replication.is_active"
-                  class="text-blue-600 hover:text-blue-900 disabled:text-gray-400"
+                  :disabled="!replication.is_active || replicatingId === replication.id"
+                  class="text-blue-600 hover:text-blue-900 disabled:text-gray-400 transition-all relative"
+                  :class="{'animate-pulse': replicatingId === replication.id}"
                   title="Démarrer la réplication"
                 >
-                  <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg v-if="replicatingId === replication.id" class="w-5 h-5 inline animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <svg v-else class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
@@ -346,12 +361,12 @@
               <select
                 v-model="form.destination_datastore"
                 class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                :class="{'border-amber-400 bg-amber-50': !form.destination_server || loadingDatastores}"
+                :class="{'border-amber-400 bg-amber-50': !form.destination_server || loadingDatastores, 'animate-pulse': loadingDatastores}"
                 :disabled="!form.destination_server || loadingDatastores"
               >
                 <option value="">
                   {{ !form.destination_server ? 'Sélectionnez d\'abord un serveur' :
-                     loadingDatastores ? 'Chargement...' :
+                     loadingDatastores ? '⏳ Chargement des datastores...' :
                      destinationDatastores.length === 0 ? 'Aucun datastore disponible' :
                      'Sélectionner un datastore...' }}
                 </option>
@@ -359,7 +374,13 @@
                   {{ ds.name }} - {{ formatDatastoreInfo(ds) }}
                 </option>
               </select>
-              <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <!-- Loading spinner -->
+              <svg v-if="loadingDatastores" class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <!-- Dropdown arrow -->
+              <svg v-else class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </div>
@@ -539,6 +560,8 @@ const destinationDatastores = ref([])
 const loading = ref(false)
 const saving = ref(false)
 const loadingDatastores = ref(false)
+const replicatingId = ref(null)
+const performingFailoverId = ref(null)
 const showCreateModal = ref(false)
 const showFailoverConfirmModal = ref(false)
 const editingReplication = ref(null)
@@ -688,13 +711,24 @@ function closeModal() {
 async function startReplication(replication) {
   if (!confirm(`Démarrer la réplication de ${replication.vm_name} ?`)) return
 
+  replicatingId.value = replication.id
   try {
-    await vmReplicationsAPI.startReplication(replication.id)
-    toast.success('Réplication démarrée')
+    const response = await vmReplicationsAPI.startReplication(replication.id)
+
+    // Afficher message approprié selon le type de réponse
+    if (response.data.warning) {
+      toast.warning(response.data.message)
+    } else {
+      toast.success(response.data.message || 'Réplication démarrée avec succès')
+    }
+
     fetchData()
   } catch (error) {
     console.error('Erreur démarrage réplication:', error)
-    toast.error('Erreur lors du démarrage de la réplication')
+    const errorMsg = error.response?.data?.error || 'Erreur lors du démarrage de la réplication'
+    toast.error(errorMsg)
+  } finally {
+    replicatingId.value = null
   }
 }
 
