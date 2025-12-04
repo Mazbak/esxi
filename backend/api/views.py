@@ -339,11 +339,16 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
 
                 # Callback pour mettre à jour la progression
                 def progress_callback(progress_percent):
-                    cache.set(f'restore_progress_{restore_id}', {
-                        'progress': progress_percent,
-                        'status': 'uploading',
-                        'message': f'Upload en cours: {progress_percent}%'
-                    }, timeout=3600)
+                    try:
+                        progress_data = {
+                            'progress': progress_percent,
+                            'status': 'uploading' if progress_percent < 100 else 'completing',
+                            'message': f'Upload en cours: {progress_percent}%' if progress_percent < 100 else 'Finalisation...'
+                        }
+                        cache.set(f'restore_progress_{restore_id}', progress_data, timeout=3600)
+                        logger.info(f"[RESTORE] Progression mise à jour: {progress_percent}% (ID: {restore_id})")
+                    except Exception as e:
+                        logger.error(f"[RESTORE] Erreur mise à jour progression: {e}")
 
                 # Déployer l'OVF avec callback de progression
                 logger.info(f"[RESTORE] Déploiement de l'OVF sur {datastore_name}... (ID: {restore_id})")
@@ -385,8 +390,17 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             logger.exception(f"[RESTORE] Erreur lors de la restauration: {str(e)}")
+
+            # Si on a un restore_id, mettre à jour la progression avec l'erreur
+            if 'restore_id' in locals():
+                cache.set(f'restore_progress_{restore_id}', {
+                    'progress': 0,
+                    'status': 'error',
+                    'message': f'Erreur: {str(e)}'
+                }, timeout=3600)
+
             return Response(
-                {'status': 'error', 'message': str(e)},
+                {'status': 'error', 'message': str(e), 'restore_id': locals().get('restore_id')},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         finally:

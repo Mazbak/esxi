@@ -1208,22 +1208,28 @@ class VMwareService:
 
             for device_url in lease_info.deviceUrl:
                 # device_url.importKey correspond au fichier à uploader
-                # Trouver le fichier VMDK correspondant
                 import_key = device_url.importKey
 
-                # Chercher le fichier VMDK dans le répertoire OVF
+                logger.info(f"[DEPLOY] Device URL: {device_url.url}, ImportKey: {import_key}")
+
+                # Chercher le fichier correspondant dans le répertoire OVF
+                # Le importKey contient généralement le nom du disque (ex: "disk-0")
                 for file_name in os.listdir(ovf_dir):
-                    if file_name.endswith('.vmdk'):
+                    # Ne traiter que les fichiers VMDK (pas les NVRAM ou autres)
+                    if file_name.endswith('.vmdk') and '-disk-' in file_name.lower():
+                        # Vérifier que ce fichier n'a pas déjà été ajouté
                         file_path = os.path.join(ovf_dir, file_name)
-                        file_size = os.path.getsize(file_path)
-                        files_to_upload.append({
-                            'path': file_path,
-                            'size': file_size,
-                            'url': device_url.url.replace('*', self.host),
-                            'device_url': device_url
-                        })
-                        total_bytes_to_upload += file_size
-                        break
+                        if not any(f['path'] == file_path for f in files_to_upload):
+                            file_size = os.path.getsize(file_path)
+                            files_to_upload.append({
+                                'path': file_path,
+                                'size': file_size,
+                                'url': device_url.url.replace('*', self.host),
+                                'device_url': device_url
+                            })
+                            total_bytes_to_upload += file_size
+                            logger.info(f"[DEPLOY] Ajouté: {file_name} -> {device_url.url}")
+                            break
 
             logger.info(f"[DEPLOY] Fichiers à uploader: {len(files_to_upload)}")
             logger.info(f"[DEPLOY] Taille totale: {total_bytes_to_upload / (1024**3):.2f} GB")
