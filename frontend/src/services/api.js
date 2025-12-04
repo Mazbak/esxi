@@ -270,7 +270,7 @@ export const vmReplicationsAPI = {
   patch: (id, data) => apiClient.patch(`/vm-replications/${id}/`, data),
   delete: (id) => apiClient.delete(`/vm-replications/${id}/`),
   startReplication: (id) => apiClient.post(`/vm-replications/${id}/start_replication/`),
-  performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/perform_failover/`, data),
+  performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/trigger_failover/`, data),
 }
 
 // ===========================

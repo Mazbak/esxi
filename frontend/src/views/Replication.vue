@@ -292,64 +292,44 @@
             </p>
           </div>
 
-          <!-- Serveurs Source et Destination -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Source Server -->
-            <div class="group">
-              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-                </svg>
-                Serveur Source
-              </label>
-              <div class="relative">
-                <select
-                  v-model="form.source_server"
-                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-4 focus:ring-green-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                  :class="{'border-amber-400 bg-amber-50': esxiServers.length === 0}"
-                >
-                  <option value="">{{ esxiServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner...' }}</option>
-                  <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
-                </select>
-                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
+          <!-- Serveur Destination -->
+          <div class="group">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+              <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+              </svg>
+              Serveur Destination
+            </label>
+            <div class="relative">
+              <select
+                v-model="form.destination_server"
+                class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                :class="{'border-amber-400 bg-amber-50': availableDestinationServers.length === 0}"
+              >
+                <option value="">{{ availableDestinationServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner le serveur de destination...' }}</option>
+                <option v-for="server in availableDestinationServers" :key="server.id" :value="server.id">{{ server.name }} ({{ server.host }})</option>
+              </select>
+              <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
             </div>
-
-            <!-- Destination Server -->
-            <div class="group">
-              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-                </svg>
-                Serveur Destination
-              </label>
-              <div class="relative">
-                <select
-                  v-model="form.destination_server"
-                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                  :class="{'border-amber-400 bg-amber-50': esxiServers.length === 0}"
-                >
-                  <option value="">{{ esxiServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner...' }}</option>
-                  <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
-                </select>
-                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </div>
+            <p v-if="selectedVM" class="mt-2 text-xs text-blue-600 flex items-center gap-1">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              La VM sera répliquée depuis {{ selectedVM.server_name }} vers le serveur sélectionné
+            </p>
           </div>
 
           <!-- Alert if no servers -->
-          <div v-if="esxiServers.length === 0" class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4">
+          <div v-if="esxiServers.length < 2" class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4">
             <div class="flex items-start gap-3">
               <svg class="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
               </svg>
               <div>
-                <h4 class="text-sm font-semibold text-amber-900 mb-1">Aucun serveur ESXi disponible</h4>
-                <p class="text-sm text-amber-800">Vous devez d'abord ajouter au moins deux serveurs ESXi dans le menu "Serveurs ESXi" avant de pouvoir créer une réplication.</p>
+                <h4 class="text-sm font-semibold text-amber-900 mb-1">Serveurs insuffisants</h4>
+                <p class="text-sm text-amber-800">Vous devez avoir au moins deux serveurs ESXi pour pouvoir répliquer une VM d'un serveur vers un autre.</p>
               </div>
             </div>
           </div>
@@ -546,7 +526,6 @@ const failoverTestMode = ref(false)
 const form = ref({
   name: '',
   virtual_machine: '',
-  source_server: '',
   destination_server: '',
   destination_datastore: '',
   replication_interval_minutes: 60,
@@ -557,6 +536,18 @@ const form = ref({
 
 const activeCount = computed(() => replications.value.filter(r => r.is_active).length)
 const inProgressCount = computed(() => replications.value.filter(r => r.status === 'in_progress').length)
+
+// Get selected VM details
+const selectedVM = computed(() => {
+  if (!form.value.virtual_machine) return null
+  return virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
+})
+
+// Get available destination servers (all except the source server of selected VM)
+const availableDestinationServers = computed(() => {
+  if (!selectedVM.value) return esxiServers.value
+  return esxiServers.value.filter(server => server.id !== selectedVM.value.server)
+})
 
 onMounted(() => {
   fetchData()
@@ -615,7 +606,6 @@ function closeModal() {
   form.value = {
     name: '',
     virtual_machine: '',
-    source_server: '',
     destination_server: '',
     destination_datastore: '',
     replication_interval_minutes: 60,
