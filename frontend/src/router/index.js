@@ -83,6 +83,48 @@ const router = createRouter({
           component: () => import('@/views/Settings.vue'),
         },
       ]
+    },
+    {
+      path: '/admin',
+      component: () => import('@/components/admin/AdminLayout.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+      children: [
+        {
+          path: '',
+          name: 'admin-dashboard',
+          component: () => import('@/views/admin/AdminDashboard.vue'),
+        },
+        {
+          path: 'orders',
+          name: 'admin-orders',
+          component: () => import('@/views/admin/OrdersManagement.vue'),
+        },
+        {
+          path: 'payments',
+          name: 'admin-payments',
+          component: () => import('@/views/admin/PaymentsManagement.vue'),
+        },
+        {
+          path: 'organizations',
+          name: 'admin-organizations',
+          component: () => import('@/views/admin/OrganizationsManagement.vue'),
+        },
+        {
+          path: 'plans',
+          name: 'admin-plans',
+          component: () => import('@/views/admin/PlansManagement.vue'),
+        },
+        {
+          path: 'coupons',
+          name: 'admin-coupons',
+          component: () => import('@/views/admin/CouponsManagement.vue'),
+        },
+        {
+          path: 'analytics',
+          name: 'admin-analytics',
+          component: () => import('@/views/admin/Analytics.vue'),
+        },
+      ]
     }
   ]
 })

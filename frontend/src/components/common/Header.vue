@@ -61,6 +61,13 @@
             >
               Paramètres
             </router-link>
+            <router-link
+              to="/admin"
+              class="block px-4 py-2 text-sm text-indigo-600 hover:bg-gray-100 font-semibold"
+              @click="userMenuOpen = false"
+            >
+              🔧 Administration
+            </router-link>
             <button
               @click="handleLogout"
               class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"

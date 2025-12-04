@@ -1193,7 +1193,9 @@ class VMReplication(models.Model):
         'esxi.ESXiServer',
         on_delete=models.CASCADE,
         related_name='replication_sources',
-        help_text="Serveur ESXi source"
+        help_text="Serveur ESXi source (auto-détecté depuis la VM)",
+        null=True,
+        blank=True
     )
 
     destination_server = models.ForeignKey(
@@ -1264,6 +1266,21 @@ class VMReplication(models.Model):
 
     def __str__(self):
         return f"Replication: {self.virtual_machine.name} -> {self.destination_server.name}"
+
+    def save(self, *args, **kwargs):
+        """
+        Auto-populate source_server from virtual_machine if not provided
+        """
+        if not self.source_server and self.virtual_machine:
+            self.source_server = self.virtual_machine.server
+        super().save(*args, **kwargs)
+
+    @property
+    def get_source_server(self):
+        """
+        Get the source server (either explicitly set or from VM)
+        """
+        return self.source_server or self.virtual_machine.server
 
 
 class FailoverEvent(models.Model):

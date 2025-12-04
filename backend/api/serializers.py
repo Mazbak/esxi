@@ -8,11 +8,17 @@ from backups.models import (
 )
 
 class ESXiServerSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='hostname', read_only=True)
+    host = serializers.CharField(source='hostname', read_only=True)
+
     class Meta:
         model = ESXiServer
         fields = '__all__'
 
 class VirtualMachineSerializer(serializers.ModelSerializer):
+    server_name = serializers.CharField(source='server.hostname', read_only=True)
+    server_host = serializers.CharField(source='server.hostname', read_only=True)
+
     class Meta:
         model = VirtualMachine
         fields = '__all__'

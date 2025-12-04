@@ -85,9 +85,19 @@
     <div class="card">
       <h2 class="text-lg font-semibold text-gray-900 mb-4">Réplications Configurées</h2>
 
-      <div v-if="loading" class="text-center py-8">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-        <p class="mt-2 text-gray-500">Chargement...</p>
+      <!-- Skeleton Loader -->
+      <div v-if="loading" class="space-y-4 animate-pulse">
+        <div v-for="i in 3" :key="i" class="flex items-center space-x-4 p-4 bg-gray-50 rounded-lg">
+          <div class="flex-1 space-y-3">
+            <div class="h-4 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-3/4"></div>
+            <div class="h-3 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-1/2"></div>
+          </div>
+          <div class="flex space-x-2">
+            <div class="h-8 w-8 bg-gradient-to-r from-blue-200 to-blue-300 rounded-full"></div>
+            <div class="h-8 w-8 bg-gradient-to-r from-orange-200 to-orange-300 rounded-full"></div>
+            <div class="h-8 w-8 bg-gradient-to-r from-indigo-200 to-indigo-300 rounded-full"></div>
+          </div>
+        </div>
       </div>
 
       <div v-else-if="replications.length === 0" class="text-center py-12">
@@ -144,11 +154,16 @@
               <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                 <button
                   @click="startReplication(replication)"
-                  :disabled="!replication.is_active"
-                  class="text-blue-600 hover:text-blue-900 disabled:text-gray-400"
+                  :disabled="!replication.is_active || replicatingId === replication.id"
+                  class="text-blue-600 hover:text-blue-900 disabled:text-gray-400 transition-all relative"
+                  :class="{'animate-pulse': replicatingId === replication.id}"
                   title="Démarrer la réplication"
                 >
-                  <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg v-if="replicatingId === replication.id" class="w-5 h-5 inline animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <svg v-else class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
@@ -292,64 +307,44 @@
             </p>
           </div>
 
-          <!-- Serveurs Source et Destination -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Source Server -->
-            <div class="group">
-              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-                </svg>
-                Serveur Source
-              </label>
-              <div class="relative">
-                <select
-                  v-model="form.source_server"
-                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-4 focus:ring-green-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                  :class="{'border-amber-400 bg-amber-50': esxiServers.length === 0}"
-                >
-                  <option value="">{{ esxiServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner...' }}</option>
-                  <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
-                </select>
-                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
+          <!-- Serveur Destination -->
+          <div class="group">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+              <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+              </svg>
+              Serveur Destination
+            </label>
+            <div class="relative">
+              <select
+                v-model="form.destination_server"
+                class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                :class="{'border-amber-400 bg-amber-50': availableDestinationServers.length === 0}"
+              >
+                <option value="">{{ availableDestinationServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner le serveur de destination...' }}</option>
+                <option v-for="server in availableDestinationServers" :key="server.id" :value="server.id">{{ server.name }} ({{ server.host }})</option>
+              </select>
+              <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
             </div>
-
-            <!-- Destination Server -->
-            <div class="group">
-              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-                </svg>
-                Serveur Destination
-              </label>
-              <div class="relative">
-                <select
-                  v-model="form.destination_server"
-                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                  :class="{'border-amber-400 bg-amber-50': esxiServers.length === 0}"
-                >
-                  <option value="">{{ esxiServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner...' }}</option>
-                  <option v-for="server in esxiServers" :key="server.id" :value="server.id">{{ server.name }}</option>
-                </select>
-                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </div>
+            <p v-if="selectedVM" class="mt-2 text-xs text-blue-600 flex items-center gap-1">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              La VM sera répliquée depuis {{ selectedVM.server_name }} vers le serveur sélectionné
+            </p>
           </div>
 
           <!-- Alert if no servers -->
-          <div v-if="esxiServers.length === 0" class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4">
+          <div v-if="esxiServers.length < 2" class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4">
             <div class="flex items-start gap-3">
               <svg class="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
               </svg>
               <div>
-                <h4 class="text-sm font-semibold text-amber-900 mb-1">Aucun serveur ESXi disponible</h4>
-                <p class="text-sm text-amber-800">Vous devez d'abord ajouter au moins deux serveurs ESXi dans le menu "Serveurs ESXi" avant de pouvoir créer une réplication.</p>
+                <h4 class="text-sm font-semibold text-amber-900 mb-1">Serveurs insuffisants</h4>
+                <p class="text-sm text-amber-800">Vous devez avoir au moins deux serveurs ESXi pour pouvoir répliquer une VM d'un serveur vers un autre.</p>
               </div>
             </div>
           </div>
@@ -362,12 +357,39 @@
               </svg>
               Datastore Destination
             </label>
-            <input
-              v-model="form.destination_datastore"
-              type="text"
-              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 placeholder-gray-400"
-              placeholder="Ex: datastore1"
-            />
+            <div class="relative">
+              <select
+                v-model="form.destination_datastore"
+                class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                :class="{'border-amber-400 bg-amber-50': !form.destination_server || loadingDatastores, 'animate-pulse': loadingDatastores}"
+                :disabled="!form.destination_server || loadingDatastores"
+              >
+                <option value="">
+                  {{ !form.destination_server ? 'Sélectionnez d\'abord un serveur' :
+                     loadingDatastores ? '⏳ Chargement des datastores...' :
+                     destinationDatastores.length === 0 ? 'Aucun datastore disponible' :
+                     'Sélectionner un datastore...' }}
+                </option>
+                <option v-for="ds in destinationDatastores" :key="ds.name" :value="ds.name">
+                  {{ ds.name }} - {{ formatDatastoreInfo(ds) }}
+                </option>
+              </select>
+              <!-- Loading spinner -->
+              <svg v-if="loadingDatastores" class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <!-- Dropdown arrow -->
+              <svg v-else class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <p v-if="form.destination_server && !loadingDatastores && selectedDatastore" class="mt-2 text-xs text-indigo-600 flex items-center gap-1">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              Capacité: {{ selectedDatastore.capacity_gb }}GB | Libre: {{ selectedDatastore.free_space_gb }}GB ({{ selectedDatastore.free_percent }}%)
+            </p>
           </div>
 
           <!-- Intervalle et Mode -->
@@ -524,7 +546,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { vmReplicationsAPI, failoverEventsAPI, virtualMachinesAPI, esxiServersAPI } from '../services/api'
 import { useToastStore } from '@/stores/toast'
 
@@ -534,8 +556,12 @@ const replications = ref([])
 const failoverEvents = ref([])
 const virtualMachines = ref([])
 const esxiServers = ref([])
+const destinationDatastores = ref([])
 const loading = ref(false)
 const saving = ref(false)
+const loadingDatastores = ref(false)
+const replicatingId = ref(null)
+const performingFailoverId = ref(null)
 const showCreateModal = ref(false)
 const showFailoverConfirmModal = ref(false)
 const editingReplication = ref(null)
@@ -546,7 +572,6 @@ const failoverTestMode = ref(false)
 const form = ref({
   name: '',
   virtual_machine: '',
-  source_server: '',
   destination_server: '',
   destination_datastore: '',
   replication_interval_minutes: 60,
@@ -557,6 +582,35 @@ const form = ref({
 
 const activeCount = computed(() => replications.value.filter(r => r.is_active).length)
 const inProgressCount = computed(() => replications.value.filter(r => r.status === 'in_progress').length)
+
+// Get selected VM details
+const selectedVM = computed(() => {
+  if (!form.value.virtual_machine) return null
+  return virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
+})
+
+// Get available destination servers (all except the source server of selected VM)
+const availableDestinationServers = computed(() => {
+  if (!selectedVM.value) return esxiServers.value
+  return esxiServers.value.filter(server => server.id !== selectedVM.value.server)
+})
+
+// Get selected datastore details
+const selectedDatastore = computed(() => {
+  if (!form.value.destination_datastore) return null
+  return destinationDatastores.value.find(ds => ds.name === form.value.destination_datastore)
+})
+
+// Watch destination server changes to fetch its datastores
+watch(() => form.value.destination_server, async (newServerId) => {
+  if (!newServerId) {
+    destinationDatastores.value = []
+    form.value.destination_datastore = ''
+    return
+  }
+
+  await fetchDatastores(newServerId)
+})
 
 onMounted(() => {
   fetchData()
@@ -581,6 +635,36 @@ async function fetchData() {
   } finally {
     loading.value = false
   }
+}
+
+async function fetchDatastores(serverId) {
+  loadingDatastores.value = true
+  try {
+    const response = await esxiServersAPI.getDatastores(serverId)
+    // Add computed free_percent to each datastore
+    const datastores = (response.data.datastores || []).map(ds => ({
+      ...ds,
+      free_percent: ds.capacity_gb > 0 ? Math.round((ds.free_space_gb / ds.capacity_gb) * 100) : 0
+    }))
+    destinationDatastores.value = datastores
+    // Reset datastore selection
+    form.value.destination_datastore = ''
+  } catch (error) {
+    console.error('Erreur chargement datastores:', error)
+    toast.error('Erreur lors du chargement des datastores')
+    destinationDatastores.value = []
+  } finally {
+    loadingDatastores.value = false
+  }
+}
+
+function formatDatastoreInfo(datastore) {
+  const capacityGB = Math.round(datastore.capacity_gb || 0)
+  const freeGB = Math.round(datastore.free_space_gb || 0)
+  const usedGB = capacityGB - freeGB
+  const freePercent = capacityGB > 0 ? Math.round((freeGB / capacityGB) * 100) : 0
+
+  return `${freeGB}GB libre / ${usedGB}GB utilisé (${capacityGB}GB total)`
 }
 
 async function saveReplication() {
@@ -615,7 +699,6 @@ function closeModal() {
   form.value = {
     name: '',
     virtual_machine: '',
-    source_server: '',
     destination_server: '',
     destination_datastore: '',
     replication_interval_minutes: 60,
@@ -628,13 +711,24 @@ function closeModal() {
 async function startReplication(replication) {
   if (!confirm(`Démarrer la réplication de ${replication.vm_name} ?`)) return
 
+  replicatingId.value = replication.id
   try {
-    await vmReplicationsAPI.startReplication(replication.id)
-    toast.success('Réplication démarrée')
+    const response = await vmReplicationsAPI.startReplication(replication.id)
+
+    // Afficher message approprié selon le type de réponse
+    if (response.data.warning) {
+      toast.warning(response.data.message)
+    } else {
+      toast.success(response.data.message || 'Réplication démarrée avec succès')
+    }
+
     fetchData()
   } catch (error) {
     console.error('Erreur démarrage réplication:', error)
-    toast.error('Erreur lors du démarrage de la réplication')
+    const errorMsg = error.response?.data?.error || 'Erreur lors du démarrage de la réplication'
+    toast.error(errorMsg)
+  } finally {
+    replicatingId.value = null
   }
 }
 
