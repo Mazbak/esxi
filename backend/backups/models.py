@@ -167,7 +167,7 @@ class RemoteStorageConfig(models.Model):
             raise ValueError(f"Impossible de déchiffrer le mot de passe: {e}")
 
     def get_full_path(self):
-        """
+        r"""
         Construit le chemin complet du stockage distant
 
         Returns:
