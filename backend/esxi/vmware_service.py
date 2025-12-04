@@ -1148,20 +1148,33 @@ class VMwareService:
             logger.info("[DEPLOY] Préparation des paramètres d'import...")
             ovf_manager = self.content.ovfManager
 
+            # Extraire le nom du réseau depuis l'OVF
+            ovf_network_name = "VM Network"  # Valeur par défaut
+            if '<Network ovf:name="' in ovf_descriptor:
+                import re
+                network_match = re.search(r'<Network ovf:name="([^"]+)"', ovf_descriptor)
+                if network_match:
+                    ovf_network_name = network_match.group(1)
+                    logger.info(f"[DEPLOY] Réseau trouvé dans OVF: {ovf_network_name}")
+            else:
+                logger.warning(f"[DEPLOY] Aucun réseau trouvé dans OVF, utilisation par défaut: {ovf_network_name}")
+
             # Créer les spécifications d'import
             spec_params = vim.OvfManager.CreateImportSpecParams()
             spec_params.entityName = vm_name
-            # NE PAS forcer diskProvisioning - laisser ESXi décider selon le format OVF
-            # spec_params.diskProvisioning = "thin"  # Commenté - causait problème avec streamOptimized
-            logger.info("[DEPLOY] Disk provisioning: AUTO (non spécifié, ESXi décidera)")
+            spec_params.diskProvisioning = "flat"  # Essayer 'flat' pour streamOptimized
+            logger.info("[DEPLOY] Disk provisioning: flat (compatible avec streamOptimized)")
 
             # Mapping réseau
             network_mapping = vim.OvfManager.NetworkMapping()
-            network_mapping.name = "VM Network"  # Nom réseau dans l'OVF
+            network_mapping.name = ovf_network_name
             network = self._find_network_by_name(network_name)
             if network:
                 network_mapping.network = network
                 spec_params.networkMapping = [network_mapping]
+                logger.info(f"[DEPLOY] Réseau mappé: {ovf_network_name} -> {network_name}")
+            else:
+                logger.warning(f"[DEPLOY] Réseau {network_name} introuvable sur ESXi")
 
             # Parser l'OVF et créer les spécifications
             logger.info("[DEPLOY] Parsing de l'OVF et création des spécifications...")
