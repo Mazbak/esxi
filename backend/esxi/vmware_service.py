@@ -1108,6 +1108,15 @@ class VMwareService:
             with open(ovf_path, 'r', encoding='utf-8') as f:
                 ovf_descriptor = f.read()
 
+            # DEBUG: Afficher des extraits du OVF pour voir comment les disques sont déclarés
+            if '<DiskSection>' in ovf_descriptor:
+                disk_start = ovf_descriptor.find('<DiskSection>')
+                disk_end = ovf_descriptor.find('</DiskSection>') + len('</DiskSection>')
+                logger.info(f"[DEPLOY] ⚠️ DiskSection trouvée dans OVF:")
+                logger.info(ovf_descriptor[disk_start:disk_end][:500] + '...')  # Premier 500 chars
+            else:
+                logger.warning("[DEPLOY] ⚠️ AUCUNE DiskSection trouvée dans OVF!")
+
             if progress_callback:
                 progress_callback(10)
 
@@ -1217,6 +1226,11 @@ class VMwareService:
                     }
 
             logger.info(f"[DEPLOY] Fichiers VMDK trouvés: {list(vmdk_files.keys())}")
+
+            # DEBUG: Afficher TOUS les device_urls retournés par ESXi
+            logger.info(f"[DEPLOY] ⚠️ NOMBRE de device_urls retournés par ESXi: {len(lease_info.deviceUrl)}")
+            for idx, dev_url in enumerate(lease_info.deviceUrl):
+                logger.info(f"[DEPLOY] Device #{idx+1}: URL={dev_url.url}, Key={dev_url.importKey}")
 
             # Ensuite, mapper chaque device_url au bon fichier
             for device_url in lease_info.deviceUrl:
