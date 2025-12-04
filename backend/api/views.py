@@ -2564,22 +2564,29 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Démarrer la réplication via le service
-        from backups.replication_service import ReplicationService
-        service = ReplicationService()
-        result = service.replicate_vm(replication)
+        try:
+            # Démarrer la réplication via le service
+            from backups.replication_service import ReplicationService
+            service = ReplicationService()
+            result = service.replicate_vm(replication)
 
-        if result['success']:
+            if result['success']:
+                return Response({
+                    'message': result['message'],
+                    'replication_id': replication.id,
+                    'duration_seconds': result.get('duration_seconds')
+                })
+            else:
+                return Response(
+                    {'error': result['message']},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        except Exception as e:
+            import traceback
             return Response({
-                'message': result['message'],
-                'replication_id': replication.id,
-                'duration_seconds': result.get('duration_seconds')
-            })
-        else:
-            return Response(
-                {'error': result['message']},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
