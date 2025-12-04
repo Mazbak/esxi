@@ -342,12 +342,33 @@
               </svg>
               Datastore Destination
             </label>
-            <input
-              v-model="form.destination_datastore"
-              type="text"
-              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 placeholder-gray-400"
-              placeholder="Ex: datastore1"
-            />
+            <div class="relative">
+              <select
+                v-model="form.destination_datastore"
+                class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
+                :class="{'border-amber-400 bg-amber-50': !form.destination_server || loadingDatastores}"
+                :disabled="!form.destination_server || loadingDatastores"
+              >
+                <option value="">
+                  {{ !form.destination_server ? 'Sélectionnez d\'abord un serveur' :
+                     loadingDatastores ? 'Chargement...' :
+                     destinationDatastores.length === 0 ? 'Aucun datastore disponible' :
+                     'Sélectionner un datastore...' }}
+                </option>
+                <option v-for="ds in destinationDatastores" :key="ds.name" :value="ds.name">
+                  {{ ds.name }} - {{ formatDatastoreInfo(ds) }}
+                </option>
+              </select>
+              <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <p v-if="form.destination_server && !loadingDatastores && selectedDatastore" class="mt-2 text-xs text-indigo-600 flex items-center gap-1">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              Capacité: {{ selectedDatastore.capacity_gb }}GB | Libre: {{ selectedDatastore.free_space_gb }}GB ({{ selectedDatastore.free_percent }}%)
+            </p>
           </div>
 
           <!-- Intervalle et Mode -->
@@ -504,7 +525,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { vmReplicationsAPI, failoverEventsAPI, virtualMachinesAPI, esxiServersAPI } from '../services/api'
 import { useToastStore } from '@/stores/toast'
 
@@ -514,8 +535,10 @@ const replications = ref([])
 const failoverEvents = ref([])
 const virtualMachines = ref([])
 const esxiServers = ref([])
+const destinationDatastores = ref([])
 const loading = ref(false)
 const saving = ref(false)
+const loadingDatastores = ref(false)
 const showCreateModal = ref(false)
 const showFailoverConfirmModal = ref(false)
 const editingReplication = ref(null)
@@ -549,6 +572,23 @@ const availableDestinationServers = computed(() => {
   return esxiServers.value.filter(server => server.id !== selectedVM.value.server)
 })
 
+// Get selected datastore details
+const selectedDatastore = computed(() => {
+  if (!form.value.destination_datastore) return null
+  return destinationDatastores.value.find(ds => ds.name === form.value.destination_datastore)
+})
+
+// Watch destination server changes to fetch its datastores
+watch(() => form.value.destination_server, async (newServerId) => {
+  if (!newServerId) {
+    destinationDatastores.value = []
+    form.value.destination_datastore = ''
+    return
+  }
+
+  await fetchDatastores(newServerId)
+})
+
 onMounted(() => {
   fetchData()
 })
@@ -572,6 +612,36 @@ async function fetchData() {
   } finally {
     loading.value = false
   }
+}
+
+async function fetchDatastores(serverId) {
+  loadingDatastores.value = true
+  try {
+    const response = await esxiServersAPI.getDatastores(serverId)
+    // Add computed free_percent to each datastore
+    const datastores = (response.data.datastores || []).map(ds => ({
+      ...ds,
+      free_percent: ds.capacity_gb > 0 ? Math.round((ds.free_space_gb / ds.capacity_gb) * 100) : 0
+    }))
+    destinationDatastores.value = datastores
+    // Reset datastore selection
+    form.value.destination_datastore = ''
+  } catch (error) {
+    console.error('Erreur chargement datastores:', error)
+    toast.error('Erreur lors du chargement des datastores')
+    destinationDatastores.value = []
+  } finally {
+    loadingDatastores.value = false
+  }
+}
+
+function formatDatastoreInfo(datastore) {
+  const capacityGB = Math.round(datastore.capacity_gb || 0)
+  const freeGB = Math.round(datastore.free_space_gb || 0)
+  const usedGB = capacityGB - freeGB
+  const freePercent = capacityGB > 0 ? Math.round((freeGB / capacityGB) * 100) : 0
+
+  return `${freeGB}GB libre / ${usedGB}GB utilisé (${capacityGB}GB total)`
 }
 
 async function saveReplication() {
