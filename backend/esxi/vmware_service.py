@@ -1179,6 +1179,14 @@ class VMwareService:
             else:
                 logger.warning(f"[DEPLOY] Aucun réseau trouvé dans OVF, utilisation par défaut: {ovf_network_name}")
 
+            # Détecter la version ESXi cible pour compatibilité cross-version (5.x -> 8.x)
+            esxi_version = self._get_esxi_version()
+            max_vmx_version = self._get_max_vmx_for_esxi(esxi_version)
+            logger.info(f"[DEPLOY] ESXi cible version: {esxi_version} (supporte max vmx-{max_vmx_version})")
+
+            # Downgrade automatique de VMX si nécessaire pour compatibilité
+            ovf_descriptor = self._adjust_vmx_version_in_ovf(ovf_descriptor, max_vmx_version)
+
             # Créer les spécifications d'import
             spec_params = vim.OvfManager.CreateImportSpecParams()
             spec_params.entityName = vm_name
@@ -1523,3 +1531,109 @@ class VMwareService:
             pass
 
         return None
+
+    def _get_esxi_version(self):
+        """
+        Détecte la version ESXi du serveur cible
+
+        Returns:
+            str: Version ESXi (ex: "6.5.0", "7.0.0", "8.0.0")
+        """
+        try:
+            if self.content and hasattr(self.content, 'about'):
+                version = self.content.about.version
+                logger.info(f"[DEPLOY] Version ESXi détectée: {version}")
+                return version
+        except Exception as e:
+            logger.warning(f"[DEPLOY] Impossible de détecter version ESXi: {e}")
+
+        # Fallback sûr - version minimale supportée
+        return "5.0.0"
+
+    def _get_max_vmx_for_esxi(self, esxi_version):
+        """
+        Retourne la version VMX maximale supportée par une version ESXi
+
+        Args:
+            esxi_version (str): Version ESXi (ex: "6.5.0")
+
+        Returns:
+            str: Version VMX maximale (ex: "13" pour vmx-13)
+        """
+        # Mapping ESXi version -> max VMX version
+        # Source: https://kb.vmware.com/s/article/1003746
+        version_mapping = {
+            '8.0': '20',  # ESXi 8.0
+            '7.0': '19',  # ESXi 7.0 U3
+            '6.7': '14',  # ESXi 6.7
+            '6.5': '13',  # ESXi 6.5
+            '6.0': '11',  # ESXi 6.0
+            '5.5': '10',  # ESXi 5.5
+            '5.1': '09',  # ESXi 5.1
+            '5.0': '08',  # ESXi 5.0
+        }
+
+        # Extraire version majeure.mineure
+        try:
+            parts = esxi_version.split('.')
+            major_minor = f"{parts[0]}.{parts[1]}"
+
+            if major_minor in version_mapping:
+                return version_mapping[major_minor]
+
+            # Si version inconnue mais >= 8.0, utiliser vmx-20
+            if float(parts[0]) >= 8:
+                return '20'
+            # Si version >= 7.0, utiliser vmx-19
+            elif float(parts[0]) >= 7:
+                return '19'
+            # Si version >= 6.7, utiliser vmx-14
+            elif float(parts[0]) == 6 and float(parts[1]) >= 7:
+                return '14'
+
+        except Exception as e:
+            logger.warning(f"[DEPLOY] Erreur parsing version ESXi {esxi_version}: {e}")
+
+        # Fallback sûr - compatible avec ESXi 5.0+
+        return '08'
+
+    def _adjust_vmx_version_in_ovf(self, ovf_descriptor, max_vmx_version):
+        """
+        Ajuste la version VMX dans l'OVF si nécessaire pour compatibilité
+
+        Args:
+            ovf_descriptor (str): Contenu OVF
+            max_vmx_version (str): Version VMX maximale supportée par ESXi cible
+
+        Returns:
+            str: OVF ajusté
+        """
+        import re
+
+        # Trouver la version VMX actuelle dans l'OVF
+        vmx_pattern = r'<vssd:VirtualSystemType>vmx-(\d+)</vssd:VirtualSystemType>'
+        match = re.search(vmx_pattern, ovf_descriptor)
+
+        if match:
+            current_vmx = match.group(1)
+            logger.info(f"[DEPLOY] Version VMX dans OVF: vmx-{current_vmx}")
+
+            # Si version OVF > version ESXi, downgrade nécessaire
+            if int(current_vmx) > int(max_vmx_version):
+                logger.warning(f"[DEPLOY] VMX downgrade nécessaire: vmx-{current_vmx} -> vmx-{max_vmx_version}")
+                logger.warning(f"[DEPLOY] Ceci permet la compatibilité cross-version ESXi")
+
+                # Remplacer la version VMX dans l'OVF
+                ovf_descriptor = re.sub(
+                    vmx_pattern,
+                    f'<vssd:VirtualSystemType>vmx-{max_vmx_version}</vssd:VirtualSystemType>',
+                    ovf_descriptor
+                )
+
+                logger.info(f"[DEPLOY] OVF ajusté pour ESXi cible (vmx-{max_vmx_version})")
+            else:
+                logger.info(f"[DEPLOY] Pas de downgrade nécessaire (vmx-{current_vmx} compatible)")
+        else:
+            logger.warning("[DEPLOY] Version VMX non trouvée dans OVF, utilisation par défaut")
+
+        return ovf_descriptor
