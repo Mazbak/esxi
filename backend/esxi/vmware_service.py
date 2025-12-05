@@ -1600,6 +1600,7 @@ class VMwareService:
     def _adjust_vmx_version_in_ovf(self, ovf_descriptor, max_vmx_version):
         """
         Ajuste la version VMX dans l'OVF si nécessaire pour compatibilité
+        Corrige aussi les InstanceID en collision (SCSI controller vs disks)
 
         Args:
             ovf_descriptor (str): Contenu OVF
@@ -1610,7 +1611,7 @@ class VMwareService:
         """
         import re
 
-        # Trouver la version VMX actuelle dans l'OVF
+        # 1. Trouver la version VMX actuelle dans l'OVF
         vmx_pattern = r'<vssd:VirtualSystemType>vmx-(\d+)</vssd:VirtualSystemType>'
         match = re.search(vmx_pattern, ovf_descriptor)
 
@@ -1635,5 +1636,34 @@ class VMwareService:
                 logger.info(f"[DEPLOY] Pas de downgrade nécessaire (vmx-{current_vmx} compatible)")
         else:
             logger.warning("[DEPLOY] Version VMX non trouvée dans OVF, utilisation par défaut")
+
+        # 2. Corriger les collisions d'InstanceID (SCSI controller=3, disk ne doit pas être 3)
+        # Rechercher les disques avec InstanceID=3 et Parent=3 (collision!)
+        disk_collision_pattern = r'(<Item>.*?<rasd:InstanceID>3</rasd:InstanceID>.*?<rasd:Parent>3</rasd:Parent>.*?<rasd:ResourceType>17</rasd:ResourceType>.*?</Item>)'
+        if re.search(disk_collision_pattern, ovf_descriptor, re.DOTALL):
+            logger.warning("[DEPLOY] Collision InstanceID détectée (disk InstanceID=3 = SCSI controller InstanceID)")
+            logger.warning("[DEPLOY] Correction automatique: disk InstanceID 3 -> 4")
+
+            # Remplacer InstanceID=3 par InstanceID=4 uniquement pour les disques (ResourceType=17)
+            # On doit chercher la séquence Item avec InstanceID=3, Parent=3, ResourceType=17
+            def fix_disk_instance_id(match):
+                item_content = match.group(1)
+                # Remplacer seulement InstanceID=3, pas Parent=3
+                fixed = re.sub(
+                    r'<rasd:InstanceID>3</rasd:InstanceID>',
+                    '<rasd:InstanceID>4</rasd:InstanceID>',
+                    item_content,
+                    count=1
+                )
+                return fixed
+
+            ovf_descriptor = re.sub(
+                disk_collision_pattern,
+                fix_disk_instance_id,
+                ovf_descriptor,
+                flags=re.DOTALL
+            )
+
+            logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
 
         return ovf_descriptor

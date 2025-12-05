@@ -528,7 +528,7 @@ class OVFExportLeaseService:
 
         # Add disks
         for i, filename, size_bytes in file_refs:
-            item_id = 3 + i
+            item_id = 4 + i  # Start at 4 (SCSI controller is 3)
             ovf_template += f"""      <Item>
         <rasd:AddressOnParent>{i}</rasd:AddressOnParent>
         <rasd:ElementName>Disk {i+1}</rasd:ElementName>
