@@ -1376,7 +1376,7 @@ class VMwareService:
             logger.info(f"[DEPLOY] Fichiers à uploader: {len(files_to_upload)}")
             logger.info(f"[DEPLOY] Taille totale: {total_bytes_to_upload / (1024**3):.2f} GB")
 
-            # Uploader chaque fichier
+            # Uploader chaque fichier avec méthode robuste
             for idx, file_info in enumerate(files_to_upload):
                 file_path = file_info['path']
                 file_url = file_info['url']
@@ -1384,62 +1384,139 @@ class VMwareService:
 
                 logger.info(f"[DEPLOY] Upload {idx+1}/{len(files_to_upload)}: {os.path.basename(file_path)}")
                 logger.info(f"[DEPLOY] URL: {file_url}")
+                logger.info(f"[DEPLOY] Taille: {file_size / (1024**2):.2f} MB")
 
-                # Configuration de la session HTTP avec SSL désactivé
-                session = requests.Session()
-                session.verify = False
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                # Classe wrapper pour upload avec progression sans générateur
+                class ProgressFileReader:
+                    """Wrapper de fichier qui track la progression sans générateur"""
+                    def __init__(self, filepath, filesize, chunk_size=1024*1024):
+                        self.filepath = filepath
+                        self.filesize = filesize
+                        self.chunk_size = chunk_size
+                        self.total_read = 0
+                        self.file = None
 
-                with open(file_path, 'rb') as f:
-                    headers = {
-                        'Content-Type': 'application/x-vnd.vmware-streamVmdk',
-                        'Content-Length': str(file_size)
-                    }
+                    def __enter__(self):
+                        self.file = open(self.filepath, 'rb')
+                        return self
 
-                    # Uploader par chunks avec progression
-                    chunk_size = 1024 * 1024  # 1MB
-                    current_uploaded = 0
+                    def __exit__(self, *args):
+                        if self.file:
+                            self.file.close()
 
-                    def upload_in_chunks():
-                        nonlocal current_uploaded, uploaded_bytes
-                        while True:
-                            chunk = f.read(chunk_size)
-                            if not chunk:
-                                break
-                            yield chunk
-                            current_uploaded += len(chunk)
+                    def read(self, size=-1):
+                        # Lire un chunk et mettre à jour la progression
+                        chunk = self.file.read(self.chunk_size if size == -1 else size)
+                        if chunk:
+                            self.total_read += len(chunk)
+                            nonlocal uploaded_bytes
                             uploaded_bytes += len(chunk)
 
                             # Mettre à jour la progression
                             if total_bytes_to_upload > 0:
                                 lease_progress = int((uploaded_bytes / total_bytes_to_upload) * 100)
-                                # Progression globale de 25% à 95%
                                 global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
 
                                 if progress_callback:
                                     progress_callback(global_progress)
 
-                                # Mettre à jour le lease pour éviter l'expiration
-                                if current_uploaded % (10 * 1024 * 1024) < chunk_size:
+                                # Update lease tous les 10MB
+                                if self.total_read % (10 * 1024 * 1024) < self.chunk_size:
                                     try:
                                         lease.HttpNfcLeaseProgress(lease_progress)
                                     except:
                                         pass
 
-                    try:
-                        response = session.put(file_url, data=upload_in_chunks(), headers=headers, timeout=600)
+                        return chunk
 
-                        if response.status_code not in [200, 201]:
-                            logger.error(f"[DEPLOY] Erreur HTTP lors de l'upload: {response.status_code}")
-                            logger.error(f"[DEPLOY] Response: {response.text[:500]}")
-                            lease.HttpNfcLeaseAbort()
-                            return False
+                # Configuration session avec retry et SSL désactivé
+                session = requests.Session()
+                session.verify = False
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+                # Configurer retry strategy
+                from requests.adapters import HTTPAdapter
+                from urllib3.util.retry import Retry
+
+                retry_strategy = Retry(
+                    total=3,
+                    backoff_factor=2,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                    allowed_methods=["PUT"]
+                )
+                adapter = HTTPAdapter(max_retries=retry_strategy)
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+
+                headers = {
+                    'Content-Type': 'application/x-vnd.vmware-streamVmdk',
+                    'Content-Length': str(file_size),
+                    'Connection': 'keep-alive'
+                }
+
+                upload_success = False
+                last_error = None
+
+                # Méthode 1: Upload avec ProgressFileReader (recommandé)
+                try:
+                    logger.info(f"[DEPLOY] Tentative d'upload (méthode: ProgressFileReader)...")
+                    with ProgressFileReader(file_path, file_size) as file_reader:
+                        response = session.put(
+                            file_url,
+                            data=file_reader,
+                            headers=headers,
+                            timeout=600,
+                            stream=False  # Important: pas de streaming
+                        )
+
+                        if response.status_code in [200, 201]:
+                            upload_success = True
+                            logger.info(f"[DEPLOY] Upload réussi avec ProgressFileReader")
+                        else:
+                            logger.warning(f"[DEPLOY] Échec ProgressFileReader: HTTP {response.status_code}")
+                            last_error = f"HTTP {response.status_code}"
+
+                except Exception as e:
+                    logger.warning(f"[DEPLOY] Échec ProgressFileReader: {e}")
+                    last_error = str(e)
+
+                # Méthode 2: Upload direct (lire tout le fichier en mémoire)
+                if not upload_success and file_size < 500 * 1024 * 1024:  # < 500MB
+                    try:
+                        logger.info(f"[DEPLOY] Tentative d'upload (méthode: lecture complète)...")
+                        with open(file_path, 'rb') as f:
+                            file_data = f.read()
+                            uploaded_bytes += len(file_data)
+
+                            response = session.put(
+                                file_url,
+                                data=file_data,
+                                headers=headers,
+                                timeout=600
+                            )
+
+                            if response.status_code in [200, 201]:
+                                upload_success = True
+                                logger.info(f"[DEPLOY] Upload réussi avec lecture complète")
+
+                                # Update progress
+                                if progress_callback and total_bytes_to_upload > 0:
+                                    global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
+                                    progress_callback(global_progress)
+                            else:
+                                logger.warning(f"[DEPLOY] Échec lecture complète: HTTP {response.status_code}")
+                                last_error = f"HTTP {response.status_code}"
+
                     except Exception as e:
-                        logger.error(f"[DEPLOY] Erreur lors de l'upload: {e}")
-                        import traceback
-                        logger.error(f"[DEPLOY] Traceback: {traceback.format_exc()}")
-                        lease.HttpNfcLeaseAbort()
-                        return False
+                        logger.warning(f"[DEPLOY] Échec lecture complète: {e}")
+                        last_error = str(e)
+
+                # Si toutes les méthodes échouent
+                if not upload_success:
+                    logger.error(f"[DEPLOY] Échec de toutes les méthodes d'upload")
+                    logger.error(f"[DEPLOY] Dernière erreur: {last_error}")
+                    lease.HttpNfcLeaseAbort()
+                    return False
 
                 logger.info(f"[DEPLOY] Fichier uploadé avec succès: {os.path.basename(file_path)}")
 
