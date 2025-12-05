@@ -1162,8 +1162,9 @@ class VMwareService:
             # Créer les spécifications d'import
             spec_params = vim.OvfManager.CreateImportSpecParams()
             spec_params.entityName = vm_name
-            spec_params.diskProvisioning = "flat"  # Essayer 'flat' pour streamOptimized
-            logger.info("[DEPLOY] Disk provisioning: flat (compatible avec streamOptimized)")
+            # CRITICAL: Ne PAS forcer diskProvisioning - laisser ESXi auto-détecter depuis le VMDK
+            # Forcer "thin" ou autre cause ESXi à rejeter les disques streamOptimized
+            logger.info("[DEPLOY] Disk provisioning: AUTO (ESXi auto-détecte depuis VMDK)")
 
             # Mapping réseau
             network_mapping = vim.OvfManager.NetworkMapping()
@@ -1175,6 +1176,7 @@ class VMwareService:
                 logger.info(f"[DEPLOY] Réseau mappé: {ovf_network_name} -> {network_name}")
             else:
                 logger.warning(f"[DEPLOY] Réseau {network_name} introuvable sur ESXi")
+                spec_params.networkMapping = []
 
             # Parser l'OVF et créer les spécifications
             logger.info("[DEPLOY] Parsing de l'OVF et création des spécifications...")
@@ -1188,12 +1190,12 @@ class VMwareService:
             # Vérifier les erreurs
             if import_spec.error:
                 errors = [str(e.msg) for e in import_spec.error]
-                logger.error(f"[DEPLOY] ⚠️ ERREURS lors de la création des spécifications: {errors}")
+                logger.error(f"[DEPLOY] ERREURS lors de la création des spécifications: {errors}")
                 return False
 
             if import_spec.warning:
                 warnings = [str(w.msg) for w in import_spec.warning]
-                logger.warning(f"[DEPLOY] ⚠️ WARNINGS lors de la création des spécifications: {warnings}")
+                logger.warning(f"[DEPLOY] WARNINGS lors de la création des spécifications: {warnings}")
 
             # DEBUG: Vérifier ce qui est dans importSpec
             logger.info(f"[DEPLOY] ImportSpec créé:")
@@ -1256,7 +1258,7 @@ class VMwareService:
             logger.info(f"[DEPLOY] Fichiers VMDK trouvés: {list(vmdk_files.keys())}")
 
             # DEBUG: Afficher TOUS les device_urls retournés par ESXi
-            logger.info(f"[DEPLOY] ⚠️ NOMBRE de device_urls retournés par ESXi: {len(lease_info.deviceUrl)}")
+            logger.info(f"[DEPLOY] NOMBRE de device_urls retournés par ESXi: {len(lease_info.deviceUrl)}")
             for idx, dev_url in enumerate(lease_info.deviceUrl):
                 logger.info(f"[DEPLOY] Device #{idx+1}: URL={dev_url.url}, Key={dev_url.importKey}")
 
@@ -1314,9 +1316,9 @@ class VMwareService:
                         'import_key': import_key
                     })
                     total_bytes_to_upload += file_info['size']
-                    logger.info(f"[DEPLOY] ✓ Ajouté: {file_name} -> {device_url.url}")
+                    logger.info(f"[DEPLOY] Ajouté: {file_name} -> {device_url.url}")
                 else:
-                    logger.warning(f"[DEPLOY] ⚠ Aucun fichier VMDK disponible pour: {import_key}")
+                    logger.warning(f"[DEPLOY] Aucun fichier VMDK disponible pour: {import_key}")
 
             logger.info(f"[DEPLOY] Fichiers à uploader: {len(files_to_upload)}")
             logger.info(f"[DEPLOY] Taille totale: {total_bytes_to_upload / (1024**3):.2f} GB")
