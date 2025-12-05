@@ -340,10 +340,30 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
             # Callback pour mettre à jour la progression
             def progress_callback(progress_percent):
                 try:
+                    # Messages descriptifs selon l'étape de progression
+                    if progress_percent < 5:
+                        message = 'Initialisation de la restauration...'
+                        status_val = 'starting'
+                    elif progress_percent < 15:
+                        message = 'Analyse du fichier OVF...'
+                        status_val = 'preparing'
+                    elif progress_percent < 25:
+                        message = 'Préparation de la machine virtuelle...'
+                        status_val = 'preparing'
+                    elif progress_percent < 95:
+                        message = f'Transfert des disques vers ESXi... {progress_percent}%'
+                        status_val = 'uploading'
+                    elif progress_percent < 100:
+                        message = 'Finalisation de la restauration...'
+                        status_val = 'completing'
+                    else:
+                        message = 'Restauration terminée avec succès'
+                        status_val = 'completed'
+
                     progress_data = {
                         'progress': progress_percent,
-                        'status': 'uploading' if progress_percent < 100 else 'completing',
-                        'message': f'Upload en cours: {progress_percent}%' if progress_percent < 100 else 'Finalisation...'
+                        'status': status_val,
+                        'message': message
                     }
                     cache.set(f'restore_progress_{restore_id}', progress_data, timeout=3600)
                     logger.info(f"[RESTORE] Progression mise à jour: {progress_percent}% (ID: {restore_id})")

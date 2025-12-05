@@ -1104,7 +1104,7 @@ class VMwareService:
             logger.info(f"[DEPLOY] Datastore: {datastore_name}")
 
             if progress_callback:
-                progress_callback(5)
+                progress_callback(2)
 
             # Vérifier que le fichier OVF existe
             if not os.path.exists(ovf_path):
@@ -1125,6 +1125,9 @@ class VMwareService:
             else:
                 logger.warning("[DEPLOY] AUCUNE DiskSection trouvée dans OVF!")
 
+            if progress_callback:
+                progress_callback(5)
+
             # DEBUG: Vérifier si le contrôleur SCSI est présent (CRITIQUE pour que ESXi crée les disques!)
             if '<rasd:ResourceType>6</rasd:ResourceType>' in ovf_descriptor:
                 logger.info("[DEPLOY] Contrôleur SCSI trouvé dans OVF")
@@ -1138,7 +1141,7 @@ class VMwareService:
                 logger.error("[DEPLOY] L'OVF doit avoir un Item avec ResourceType=6 avant les disques")
 
             if progress_callback:
-                progress_callback(10)
+                progress_callback(8)
 
             # Récupérer le datastore
             logger.info(f"[DEPLOY] Recherche du datastore {datastore_name}...")
@@ -1162,7 +1165,7 @@ class VMwareService:
                 return False
 
             if progress_callback:
-                progress_callback(15)
+                progress_callback(12)
 
             # Préparer les paramètres d'import
             logger.info("[DEPLOY] Préparation des paramètres d'import...")
@@ -1206,6 +1209,9 @@ class VMwareService:
                 logger.warning(f"[DEPLOY] Réseau {network_name} introuvable sur ESXi")
                 spec_params.networkMapping = []
 
+            if progress_callback:
+                progress_callback(15)
+
             # Parser l'OVF et créer les spécifications
             logger.info("[DEPLOY] Parsing de l'OVF et création des spécifications...")
             import_spec = ovf_manager.CreateImportSpec(
@@ -1224,6 +1230,9 @@ class VMwareService:
             if import_spec.warning:
                 warnings = [str(w.msg) for w in import_spec.warning]
                 logger.warning(f"[DEPLOY] WARNINGS lors de la création des spécifications: {warnings}")
+
+            if progress_callback:
+                progress_callback(18)
 
             # DEBUG: Vérifier ce qui est dans importSpec
             logger.info(f"[DEPLOY] ImportSpec créé:")
@@ -1248,10 +1257,19 @@ class VMwareService:
                 vm_folder
             )
 
+            if progress_callback:
+                progress_callback(22)
+
             # Attendre que le lease soit prêt
             logger.info("[DEPLOY] Attente que le lease soit prêt...")
+            wait_count = 0
             while lease.state == vim.HttpNfcLease.State.initializing:
                 time.sleep(1)
+                wait_count += 1
+                # Progression graduelle pendant l'attente du lease
+                if progress_callback and wait_count % 2 == 0:
+                    current_progress = min(24, 22 + (wait_count // 2))
+                    progress_callback(current_progress)
 
             if lease.state != vim.HttpNfcLease.State.ready:
                 logger.error(f"[DEPLOY] Le lease n'est pas prêt: {lease.state}")
@@ -1520,7 +1538,7 @@ class VMwareService:
 
                         # Vérifier si curl est disponible
                         if shutil.which('curl'):
-                            # Construire la commande curl (version simplifiée pour debug)
+                            # Construire la commande curl avec progression
                             curl_cmd = [
                                 'curl',
                                 '-X', 'PUT',
@@ -1532,27 +1550,57 @@ class VMwareService:
                                 '--max-time', '600',
                                 '--connect-timeout', '30',
                                 '-w', '\n%{http_code}',  # Write HTTP code on new line
-                                '-v',  # Verbose pour debug
+                                '--progress-bar',  # Barre de progression simple
                                 file_url
                             ]
 
-                            logger.info(f"[DEPLOY] Commande curl complète: {' '.join(curl_cmd)}")
+                            logger.info(f"[DEPLOY] Démarrage de l'upload avec curl...")
 
                             # Lancer curl
                             process = subprocess.Popen(
                                 curl_cmd,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
-                                text=True
+                                text=True,
+                                bufsize=1
                             )
 
-                            # Attendre la fin et récupérer les sorties
-                            stdout, stderr = process.communicate()
+                            # Lire stderr en temps réel pour suivre la progression
+                            import threading
+                            stderr_lines = []
 
-                            # Debug: afficher tout
-                            logger.info(f"[DEPLOY] Curl return code: {process.returncode}")
-                            logger.info(f"[DEPLOY] Curl stdout: {stdout[:1000] if stdout else '(empty)'}")
-                            logger.info(f"[DEPLOY] Curl stderr: {stderr[:1000] if stderr else '(empty)'}")
+                            def read_stderr():
+                                for line in process.stderr:
+                                    stderr_lines.append(line)
+                                    # Parser la progression de curl (format: ######## 50.0%)
+                                    if '%' in line:
+                                        try:
+                                            # Extraire le pourcentage de la ligne
+                                            percent_str = line.strip().split()[-1].replace('%', '')
+                                            curl_percent = float(percent_str)
+
+                                            # Calculer la progression globale
+                                            # Upload = 25% à 95% (70% du total)
+                                            file_progress = (uploaded_bytes + (file_size * curl_percent / 100)) / total_bytes_to_upload
+                                            global_progress = 25 + int(file_progress * 70)
+
+                                            if progress_callback:
+                                                progress_callback(global_progress)
+                                        except:
+                                            pass
+
+                            # Démarrer le thread de lecture stderr
+                            stderr_thread = threading.Thread(target=read_stderr)
+                            stderr_thread.daemon = True
+                            stderr_thread.start()
+
+                            # Attendre la fin et récupérer stdout
+                            stdout, _ = process.communicate()
+                            stderr_thread.join(timeout=1)
+                            stderr = ''.join(stderr_lines)
+
+                            # Debug: afficher résultat
+                            logger.info(f"[DEPLOY] Curl terminé avec code: {process.returncode}")
 
                             # Extraire le code HTTP de la dernière ligne de stdout
                             http_code = 0
@@ -1563,20 +1611,20 @@ class VMwareService:
                                 except:
                                     http_code = 0
 
-                            logger.info(f"[DEPLOY] HTTP code extrait: {http_code}")
+                            logger.info(f"[DEPLOY] Code HTTP: {http_code}")
 
                             if process.returncode == 0 and http_code in [200, 201]:
                                 upload_success = True
                                 uploaded_bytes += file_size
-                                logger.info(f"[DEPLOY] Upload réussi avec curl (HTTP {http_code})")
+                                logger.info(f"[DEPLOY] ✓ Upload réussi avec curl (HTTP {http_code})")
 
-                                # Update progress
+                                # Update progress to file completion
                                 if progress_callback and total_bytes_to_upload > 0:
                                     global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
                                     progress_callback(global_progress)
                             else:
-                                logger.warning(f"[DEPLOY] Échec curl: return={process.returncode}, HTTP={http_code}")
-                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}, stderr={stderr[:200]}"
+                                logger.warning(f"[DEPLOY] Échec curl: code={process.returncode}, HTTP={http_code}")
+                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}"
                         else:
                             logger.warning(f"[DEPLOY] curl non disponible sur ce système")
                             last_error = "curl not found"
@@ -1599,7 +1647,14 @@ class VMwareService:
             lease.HttpNfcLeaseComplete()
 
             if progress_callback:
-                progress_callback(95)
+                progress_callback(96)
+
+            # Vérification finale
+            logger.info("[DEPLOY] Vérification de la VM créée...")
+            time.sleep(0.5)
+
+            if progress_callback:
+                progress_callback(98)
 
             # Démarrer la VM si demandé
             if power_on:
