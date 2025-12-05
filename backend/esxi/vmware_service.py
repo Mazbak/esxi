@@ -1694,32 +1694,34 @@ class VMwareService:
 
                     logger.warning(f"[DEPLOY] Correction automatique: disk InstanceID {old_id} -> {new_id}")
 
-                    # Use regex to replace ONLY in disk Items (ResourceType=17 with Parent=old_id)
-                    # We need to find the <Item> block that contains:
-                    # - ResourceType 17 (disk)
-                    # - Parent = old_id
-                    # - InstanceID = old_id
-                    # And replace only the InstanceID in that block
+                    # Extract all <Item> blocks and find the one matching our criteria
+                    # This approach handles any field order within the Item
+                    item_blocks = re.findall(r'<Item>.*?</Item>', ovf_descriptor, re.DOTALL)
 
-                    # Pattern to match the entire disk Item
-                    disk_item_pattern = r'(<Item>.*?<rasd:ResourceType>17</rasd:ResourceType>.*?<rasd:Parent>' + re.escape(old_id) + r'</rasd:Parent>.*?<rasd:InstanceID>)' + re.escape(old_id) + r'(</rasd:InstanceID>.*?</Item>)'
+                    for item_block in item_blocks:
+                        # Check if this Item contains all three required elements
+                        has_disk_type = re.search(r'<rasd:ResourceType>17</rasd:ResourceType>', item_block)
+                        has_parent = re.search(r'<rasd:Parent>' + re.escape(old_id) + r'</rasd:Parent>', item_block)
+                        has_instance_id = re.search(r'<rasd:InstanceID>' + re.escape(old_id) + r'</rasd:InstanceID>', item_block)
 
-                    def replace_disk_id(match):
-                        return match.group(1) + str(new_id) + match.group(2)
+                        if has_disk_type and has_parent and has_instance_id:
+                            # This is our target disk Item - replace its InstanceID
+                            logger.info(f"[DEPLOY] Disk Item trouvé, remplacement InstanceID {old_id} -> {new_id}")
 
-                    # Check if pattern matches
-                    if re.search(disk_item_pattern, ovf_descriptor, re.DOTALL):
-                        ovf_descriptor = re.sub(disk_item_pattern, replace_disk_id, ovf_descriptor, flags=re.DOTALL)
-                        logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
-                    else:
-                        # Try alternate pattern (InstanceID might come before Parent)
-                        disk_item_pattern_alt = r'(<Item>.*?<rasd:ResourceType>17</rasd:ResourceType>.*?<rasd:InstanceID>)' + re.escape(old_id) + r'(</rasd:InstanceID>.*?<rasd:Parent>' + re.escape(old_id) + r'</rasd:Parent>.*?</Item>)'
+                            # Replace only the InstanceID in this specific Item block
+                            new_item_block = re.sub(
+                                r'<rasd:InstanceID>' + re.escape(old_id) + r'</rasd:InstanceID>',
+                                f'<rasd:InstanceID>{new_id}</rasd:InstanceID>',
+                                item_block,
+                                count=1  # Only replace first occurrence
+                            )
 
-                        if re.search(disk_item_pattern_alt, ovf_descriptor, re.DOTALL):
-                            ovf_descriptor = re.sub(disk_item_pattern_alt, replace_disk_id, ovf_descriptor, flags=re.DOTALL)
+                            # Replace the old Item block with the new one in the full OVF
+                            ovf_descriptor = ovf_descriptor.replace(item_block, new_item_block, 1)
                             logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
-                        else:
-                            logger.warning(f"[DEPLOY] Impossible de trouver le disk Item pour correction (ID={old_id})")
+                            break
+                    else:
+                        logger.warning(f"[DEPLOY] Impossible de trouver le disk Item pour correction (ID={old_id})")
 
         except Exception as e:
             logger.warning(f"[DEPLOY] Impossible de parser l'OVF avec XML: {e}")
