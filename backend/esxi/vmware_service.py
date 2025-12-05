@@ -1293,37 +1293,62 @@ class VMwareService:
             # Ensuite, mapper chaque device_url au bon fichier
             for device_url in lease_info.deviceUrl:
                 import_key = device_url.importKey
-                logger.info(f"[DEPLOY] Device URL: {device_url.url}, ImportKey: {import_key}")
+                url = device_url.url
+                logger.info(f"[DEPLOY] Device URL: {url}, ImportKey: {import_key}")
 
                 # FILTRER : Ignorer les device_url qui ne sont PAS pour des disques VMDK
-                # ImportKey contient généralement "/vmname/disk-X" pour les disques
-                # et "/vmname/nvram" pour NVRAM
+                # ImportKey peut avoir plusieurs formats:
+                # - "/vmname/disk-X" pour les disques (ancienne notation)
+                # - "/vmname/ControllerN:N" pour les disques sur contrôleur (notation moderne)
+                # - "/vmname/nvram" pour NVRAM
                 if 'nvram' in import_key.lower():
                     logger.info(f"[DEPLOY] Ignoré (NVRAM): {import_key}")
                     continue
 
-                if 'disk' not in import_key.lower():
+                # Un device est un disque si:
+                # 1. ImportKey contient "disk" OU
+                # 2. ImportKey contient ":N" (notation Controller:disk) OU
+                # 3. URL contient ".vmdk"
+                is_disk = (
+                    'disk' in import_key.lower() or
+                    ':' in import_key or  # Controller0:0, Controller1:1, etc.
+                    '.vmdk' in url.lower()
+                )
+
+                if not is_disk:
                     logger.info(f"[DEPLOY] Ignoré (pas un disque): {import_key}")
                     continue
 
+                logger.info(f"[DEPLOY] Device identifié comme disque VMDK: {import_key}")
+
                 # Chercher le fichier VMDK correspondant
-                # L'importKey contient souvent "disk-0", "disk-1", etc.
+                # L'importKey peut contenir "disk-0" ou "Controller0:0"
                 matched_file = None
+
+                # Extraire le numéro de disque de l'importKey
+                disk_number = None
+                if 'disk-' in import_key.lower():
+                    # Format: "/VM/disk-0"
+                    disk_number = import_key.lower().split('disk-')[-1].split('/')[0].split('.')[0]
+                elif ':' in import_key:
+                    # Format: "/VM/Controller0:0" - le nombre après ":" est le numéro du disque
+                    disk_number = import_key.split(':')[-1].strip()
+
+                logger.info(f"[DEPLOY] Numéro de disque extrait: {disk_number}")
+
                 for file_name, file_info in vmdk_files.items():
                     # Vérifier que ce fichier n'a pas déjà été mappé
                     if any(f['path'] == file_info['path'] for f in files_to_upload):
                         continue
 
-                    # Essayer de matcher par le numéro de disque dans l'importKey
-                    # Par exemple: importKey="/VM/disk-0" devrait matcher "VM-disk-0.vmdk"
-                    if 'disk-' in import_key.lower() and 'disk-' in file_name.lower():
-                        # Extraire le numéro de disque de l'importKey
-                        import_disk_num = import_key.lower().split('disk-')[-1].split('/')[0].split('.')[0]
+                    # Essayer de matcher par le numéro de disque
+                    # Par exemple: disk_number="0" devrait matcher "VM-disk-0.vmdk"
+                    if disk_number and 'disk-' in file_name.lower():
                         file_disk_num = file_name.lower().split('disk-')[-1].split('.')[0]
 
-                        if import_disk_num == file_disk_num:
+                        if disk_number == file_disk_num:
                             matched_file = (file_name, file_info)
-                            logger.info(f"[DEPLOY] Match trouvé: {file_name} <-> {import_key}")
+                            logger.info(f"[DEPLOY] Match trouvé par numéro: {file_name} <-> {import_key}")
                             break
 
                 # Si aucun match spécifique, prendre le premier VMDK non mappé
