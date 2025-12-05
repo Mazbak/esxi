@@ -1520,25 +1520,24 @@ class VMwareService:
 
                         # Vérifier si curl est disponible
                         if shutil.which('curl'):
-                            # Construire la commande curl
+                            # Construire la commande curl (version simplifiée pour debug)
                             curl_cmd = [
                                 'curl',
                                 '-X', 'PUT',
                                 '--insecure',  # Ignore SSL verification
-                                '--header', f'Content-Type: {headers["Content-Type"]}',
-                                '--header', f'Content-Length: {headers["Content-Length"]}',
+                                '-H', f'Content-Type: {headers["Content-Type"]}',
+                                '-H', f'Content-Length: {headers["Content-Length"]}',
                                 '--upload-file', file_path,
                                 '--max-time', '600',
                                 '--connect-timeout', '30',
-                                '--silent',
-                                '--show-error',
-                                '--write-out', '%{http_code}',
+                                '-w', '\n%{http_code}',  # Write HTTP code on new line
+                                '-v',  # Verbose pour debug
                                 file_url
                             ]
 
-                            logger.info(f"[DEPLOY] Commande curl: curl --insecure -X PUT --upload-file '{file_path}' '{file_url}'")
+                            logger.info(f"[DEPLOY] Commande curl complète: {' '.join(curl_cmd)}")
 
-                            # Lancer curl avec suivi de progression
+                            # Lancer curl
                             process = subprocess.Popen(
                                 curl_cmd,
                                 stdout=subprocess.PIPE,
@@ -1546,14 +1545,24 @@ class VMwareService:
                                 text=True
                             )
 
-                            # Attendre la fin et récupérer le code HTTP
+                            # Attendre la fin et récupérer les sorties
                             stdout, stderr = process.communicate()
 
-                            # Le code HTTP est dans stdout (grâce à --write-out)
-                            try:
-                                http_code = int(stdout.strip()) if stdout.strip().isdigit() else 0
-                            except:
-                                http_code = 0
+                            # Debug: afficher tout
+                            logger.info(f"[DEPLOY] Curl return code: {process.returncode}")
+                            logger.info(f"[DEPLOY] Curl stdout: {stdout[:1000] if stdout else '(empty)'}")
+                            logger.info(f"[DEPLOY] Curl stderr: {stderr[:1000] if stderr else '(empty)'}")
+
+                            # Extraire le code HTTP de la dernière ligne de stdout
+                            http_code = 0
+                            if stdout:
+                                lines = stdout.strip().split('\n')
+                                try:
+                                    http_code = int(lines[-1]) if lines[-1].isdigit() else 0
+                                except:
+                                    http_code = 0
+
+                            logger.info(f"[DEPLOY] HTTP code extrait: {http_code}")
 
                             if process.returncode == 0 and http_code in [200, 201]:
                                 upload_success = True
@@ -1566,9 +1575,7 @@ class VMwareService:
                                     progress_callback(global_progress)
                             else:
                                 logger.warning(f"[DEPLOY] Échec curl: return={process.returncode}, HTTP={http_code}")
-                                if stderr:
-                                    logger.warning(f"[DEPLOY] Curl stderr: {stderr[:500]}")
-                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}"
+                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}, stderr={stderr[:200]}"
                         else:
                             logger.warning(f"[DEPLOY] curl non disponible sur ce système")
                             last_error = "curl not found"
