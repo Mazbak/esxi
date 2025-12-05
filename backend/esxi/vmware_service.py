@@ -1120,10 +1120,10 @@ class VMwareService:
             if '<DiskSection>' in ovf_descriptor:
                 disk_start = ovf_descriptor.find('<DiskSection>')
                 disk_end = ovf_descriptor.find('</DiskSection>') + len('</DiskSection>')
-                logger.info(f"[DEPLOY] ⚠️ DiskSection trouvée dans OVF:")
+                logger.info(f"[DEPLOY] DiskSection trouvée dans OVF:")
                 logger.info(ovf_descriptor[disk_start:disk_end][:500] + '...')  # Premier 500 chars
             else:
-                logger.warning("[DEPLOY] ⚠️ AUCUNE DiskSection trouvée dans OVF!")
+                logger.warning("[DEPLOY] AUCUNE DiskSection trouvée dans OVF!")
 
             # DEBUG: Vérifier si le contrôleur SCSI est présent (CRITIQUE pour que ESXi crée les disques!)
             if '<rasd:ResourceType>6</rasd:ResourceType>' in ovf_descriptor:
@@ -1610,6 +1610,7 @@ class VMwareService:
             str: OVF ajusté
         """
         import re
+        import xml.etree.ElementTree as ET
 
         # 1. Trouver la version VMX actuelle dans l'OVF
         vmx_pattern = r'<vssd:VirtualSystemType>vmx-(\d+)</vssd:VirtualSystemType>'
@@ -1637,34 +1638,92 @@ class VMwareService:
         else:
             logger.warning("[DEPLOY] Version VMX non trouvée dans OVF, utilisation par défaut")
 
-        # 2. Corriger les collisions d'InstanceID (SCSI controller=3, disk ne doit pas être 3)
-        # Rechercher les disques avec InstanceID=3 et Parent=3 (collision!)
-        disk_collision_pattern = r'(<Item>.*?<rasd:InstanceID>3</rasd:InstanceID>.*?<rasd:Parent>3</rasd:Parent>.*?<rasd:ResourceType>17</rasd:ResourceType>.*?</Item>)'
-        if re.search(disk_collision_pattern, ovf_descriptor, re.DOTALL):
-            logger.warning("[DEPLOY] Collision InstanceID détectée (disk InstanceID=3 = SCSI controller InstanceID)")
-            logger.warning("[DEPLOY] Correction automatique: disk InstanceID 3 -> 4")
+        # 2. Corriger les collisions d'InstanceID en utilisant XML parsing
+        # Parse XML pour trouver les contrôleurs SCSI et les disques
+        try:
+            # Register namespaces
+            namespaces = {
+                'ovf': 'http://schemas.dmtf.org/ovf/envelope/1',
+                'rasd': 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData',
+                'vssd': 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData'
+            }
 
-            # Remplacer InstanceID=3 par InstanceID=4 uniquement pour les disques (ResourceType=17)
-            # On doit chercher la séquence Item avec InstanceID=3, Parent=3, ResourceType=17
-            def fix_disk_instance_id(match):
-                item_content = match.group(1)
-                # Remplacer seulement InstanceID=3, pas Parent=3
-                fixed = re.sub(
-                    r'<rasd:InstanceID>3</rasd:InstanceID>',
-                    '<rasd:InstanceID>4</rasd:InstanceID>',
-                    item_content,
-                    count=1
-                )
-                return fixed
+            # Parse OVF
+            root = ET.fromstring(ovf_descriptor.encode('utf-8'))
 
-            ovf_descriptor = re.sub(
-                disk_collision_pattern,
-                fix_disk_instance_id,
-                ovf_descriptor,
-                flags=re.DOTALL
-            )
+            # Find all Items in VirtualHardwareSection
+            items = root.findall('.//ovf:VirtualHardwareSection/ovf:Item', namespaces)
 
-            logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
+            # Collect all InstanceIDs and look for disk/parent collisions
+            collisions_to_fix = []
+
+            for item in items:
+                instance_id_elem = item.find('rasd:InstanceID', namespaces)
+                resource_type_elem = item.find('rasd:ResourceType', namespaces)
+                parent_elem = item.find('rasd:Parent', namespaces)
+
+                if instance_id_elem is not None and resource_type_elem is not None:
+                    instance_id = instance_id_elem.text
+                    resource_type = resource_type_elem.text
+                    parent = parent_elem.text if parent_elem is not None else None
+
+                    # Check if this is a disk with InstanceID == Parent (collision)
+                    if resource_type == '17' and parent and instance_id == parent:
+                        collisions_to_fix.append({
+                            'old_id': instance_id,
+                            'parent': parent
+                        })
+
+            # Fix collisions by doing simple string replacement in the original OVF
+            if collisions_to_fix:
+                for collision in collisions_to_fix:
+                    old_id = collision['old_id']
+                    parent = collision['parent']
+
+                    logger.warning(f"[DEPLOY] Collision InstanceID détectée: disk InstanceID={old_id} = Parent={parent}")
+
+                    # Find all used IDs
+                    used_ids = set()
+                    for match in re.finditer(r'<rasd:InstanceID>(\d+)</rasd:InstanceID>', ovf_descriptor):
+                        used_ids.add(match.group(1))
+
+                    # Find next available ID
+                    new_id = int(old_id)
+                    while str(new_id) in used_ids:
+                        new_id += 1
+
+                    logger.warning(f"[DEPLOY] Correction automatique: disk InstanceID {old_id} -> {new_id}")
+
+                    # Use regex to replace ONLY in disk Items (ResourceType=17 with Parent=old_id)
+                    # We need to find the <Item> block that contains:
+                    # - ResourceType 17 (disk)
+                    # - Parent = old_id
+                    # - InstanceID = old_id
+                    # And replace only the InstanceID in that block
+
+                    # Pattern to match the entire disk Item
+                    disk_item_pattern = r'(<Item>.*?<rasd:ResourceType>17</rasd:ResourceType>.*?<rasd:Parent>' + re.escape(old_id) + r'</rasd:Parent>.*?<rasd:InstanceID>)' + re.escape(old_id) + r'(</rasd:InstanceID>.*?</Item>)'
+
+                    def replace_disk_id(match):
+                        return match.group(1) + str(new_id) + match.group(2)
+
+                    # Check if pattern matches
+                    if re.search(disk_item_pattern, ovf_descriptor, re.DOTALL):
+                        ovf_descriptor = re.sub(disk_item_pattern, replace_disk_id, ovf_descriptor, flags=re.DOTALL)
+                        logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
+                    else:
+                        # Try alternate pattern (InstanceID might come before Parent)
+                        disk_item_pattern_alt = r'(<Item>.*?<rasd:ResourceType>17</rasd:ResourceType>.*?<rasd:InstanceID>)' + re.escape(old_id) + r'(</rasd:InstanceID>.*?<rasd:Parent>' + re.escape(old_id) + r'</rasd:Parent>.*?</Item>)'
+
+                        if re.search(disk_item_pattern_alt, ovf_descriptor, re.DOTALL):
+                            ovf_descriptor = re.sub(disk_item_pattern_alt, replace_disk_id, ovf_descriptor, flags=re.DOTALL)
+                            logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
+                        else:
+                            logger.warning(f"[DEPLOY] Impossible de trouver le disk Item pour correction (ID={old_id})")
+
+        except Exception as e:
+            logger.warning(f"[DEPLOY] Impossible de parser l'OVF avec XML: {e}")
+            logger.warning("[DEPLOY] Collision InstanceID non corrigée - utilisation OVF original")
 
         # 3. DEBUG: Afficher les sections complètes pour diagnostic
         logger.info("[DEPLOY] ========== DEBUG OVF ==========")
@@ -1681,14 +1740,16 @@ class VMwareService:
             logger.info(f"[DEPLOY] VirtualHardwareSection contient {len(items)} Items:")
 
             for i, item in enumerate(items, 1):
-                # Extraire InstanceID et ResourceType
+                # Extraire InstanceID, Parent et ResourceType
                 instance_match = re.search(r'<rasd:InstanceID>(\d+)</rasd:InstanceID>', item)
                 resource_match = re.search(r'<rasd:ResourceType>(\d+)</rasd:ResourceType>', item)
                 element_match = re.search(r'<rasd:ElementName>([^<]+)</rasd:ElementName>', item)
+                parent_match = re.search(r'<rasd:Parent>(\d+)</rasd:Parent>', item)
 
                 instance_id = instance_match.group(1) if instance_match else '?'
                 resource_type = resource_match.group(1) if resource_match else '?'
                 element_name = element_match.group(1) if element_match else '?'
+                parent = parent_match.group(1) if parent_match else 'N/A'
 
                 # ResourceType meanings: 3=CPU, 4=RAM, 6=SCSI, 17=Disk
                 type_name = {
@@ -1698,7 +1759,7 @@ class VMwareService:
                     '17': 'Disk'
                 }.get(resource_type, 'Unknown')
 
-                logger.info(f"[DEPLOY]   Item #{i}: InstanceID={instance_id}, Type={type_name} ({resource_type}), Name={element_name}")
+                logger.info(f"[DEPLOY]   Item #{i}: InstanceID={instance_id}, Parent={parent}, Type={type_name} ({resource_type}), Name={element_name}")
 
         logger.info("[DEPLOY] ========== FIN DEBUG OVF ==========")
 
