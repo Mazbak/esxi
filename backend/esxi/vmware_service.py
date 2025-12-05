@@ -1481,7 +1481,7 @@ class VMwareService:
                     last_error = str(e)
 
                 # Méthode 2: Upload direct (lire tout le fichier en mémoire)
-                if not upload_success and file_size < 500 * 1024 * 1024:  # < 500MB
+                if not upload_success and file_size < 100 * 1024 * 1024:  # < 100MB seulement
                     try:
                         logger.info(f"[DEPLOY] Tentative d'upload (méthode: lecture complète)...")
                         with open(file_path, 'rb') as f:
@@ -1509,6 +1509,72 @@ class VMwareService:
 
                     except Exception as e:
                         logger.warning(f"[DEPLOY] Échec lecture complète: {e}")
+                        last_error = str(e)
+
+                # Méthode 3: Upload avec curl (solution ultime, fonctionne toujours)
+                if not upload_success:
+                    try:
+                        logger.info(f"[DEPLOY] Tentative d'upload (méthode: curl subprocess)...")
+                        import subprocess
+                        import shutil
+
+                        # Vérifier si curl est disponible
+                        if shutil.which('curl'):
+                            # Construire la commande curl
+                            curl_cmd = [
+                                'curl',
+                                '-X', 'PUT',
+                                '--insecure',  # Ignore SSL verification
+                                '--header', f'Content-Type: {headers["Content-Type"]}',
+                                '--header', f'Content-Length: {headers["Content-Length"]}',
+                                '--upload-file', file_path,
+                                '--max-time', '600',
+                                '--connect-timeout', '30',
+                                '--silent',
+                                '--show-error',
+                                '--write-out', '%{http_code}',
+                                file_url
+                            ]
+
+                            logger.info(f"[DEPLOY] Commande curl: curl --insecure -X PUT --upload-file '{file_path}' '{file_url}'")
+
+                            # Lancer curl avec suivi de progression
+                            process = subprocess.Popen(
+                                curl_cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True
+                            )
+
+                            # Attendre la fin et récupérer le code HTTP
+                            stdout, stderr = process.communicate()
+
+                            # Le code HTTP est dans stdout (grâce à --write-out)
+                            try:
+                                http_code = int(stdout.strip()) if stdout.strip().isdigit() else 0
+                            except:
+                                http_code = 0
+
+                            if process.returncode == 0 and http_code in [200, 201]:
+                                upload_success = True
+                                uploaded_bytes += file_size
+                                logger.info(f"[DEPLOY] Upload réussi avec curl (HTTP {http_code})")
+
+                                # Update progress
+                                if progress_callback and total_bytes_to_upload > 0:
+                                    global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
+                                    progress_callback(global_progress)
+                            else:
+                                logger.warning(f"[DEPLOY] Échec curl: return={process.returncode}, HTTP={http_code}")
+                                if stderr:
+                                    logger.warning(f"[DEPLOY] Curl stderr: {stderr[:500]}")
+                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}"
+                        else:
+                            logger.warning(f"[DEPLOY] curl non disponible sur ce système")
+                            last_error = "curl not found"
+
+                    except Exception as e:
+                        logger.warning(f"[DEPLOY] Échec curl: {e}")
                         last_error = str(e)
 
                 # Si toutes les méthodes échouent
