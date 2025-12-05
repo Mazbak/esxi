@@ -1666,4 +1666,40 @@ class VMwareService:
 
             logger.info("[DEPLOY] OVF corrigé: collision InstanceID résolue")
 
+        # 3. DEBUG: Afficher les sections complètes pour diagnostic
+        logger.info("[DEPLOY] ========== DEBUG OVF ==========")
+
+        # Afficher toute la section VirtualHardwareSection
+        if '<VirtualHardwareSection>' in ovf_descriptor:
+            vhs_start = ovf_descriptor.find('<VirtualHardwareSection>')
+            vhs_end = ovf_descriptor.find('</VirtualHardwareSection>') + len('</VirtualHardwareSection>')
+            vhs_content = ovf_descriptor[vhs_start:vhs_end]
+
+            # Compter les Items
+            import re
+            items = re.findall(r'<Item>.*?</Item>', vhs_content, re.DOTALL)
+            logger.info(f"[DEPLOY] VirtualHardwareSection contient {len(items)} Items:")
+
+            for i, item in enumerate(items, 1):
+                # Extraire InstanceID et ResourceType
+                instance_match = re.search(r'<rasd:InstanceID>(\d+)</rasd:InstanceID>', item)
+                resource_match = re.search(r'<rasd:ResourceType>(\d+)</rasd:ResourceType>', item)
+                element_match = re.search(r'<rasd:ElementName>([^<]+)</rasd:ElementName>', item)
+
+                instance_id = instance_match.group(1) if instance_match else '?'
+                resource_type = resource_match.group(1) if resource_match else '?'
+                element_name = element_match.group(1) if element_match else '?'
+
+                # ResourceType meanings: 3=CPU, 4=RAM, 6=SCSI, 17=Disk
+                type_name = {
+                    '3': 'CPU',
+                    '4': 'RAM',
+                    '6': 'SCSI Controller',
+                    '17': 'Disk'
+                }.get(resource_type, 'Unknown')
+
+                logger.info(f"[DEPLOY]   Item #{i}: InstanceID={instance_id}, Type={type_name} ({resource_type}), Name={element_name}")
+
+        logger.info("[DEPLOY] ========== FIN DEBUG OVF ==========")
+
         return ovf_descriptor
