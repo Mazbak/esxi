@@ -444,6 +444,16 @@ class OVFExportLeaseService:
         num_cpus = getattr(self.vm.config.hardware, 'numCPU', 1)
         guest_id = getattr(self.vm.config, 'guestId', 'otherGuest')
 
+        # Detect VM hardware version for ESXi compatibility (5.0+)
+        # ESXi 5.0=vmx-08, 5.1=vmx-09, 5.5=vmx-10, 6.0=vmx-11, 6.5=vmx-13, 6.7=vmx-14, 7.0=vmx-17+, 8.0=vmx-20
+        vm_version = getattr(self.vm.config, 'version', 'vmx-08')
+        if isinstance(vm_version, str) and 'vmx-' in vm_version:
+            vmx_version = vm_version.split('vmx-')[1]
+        else:
+            vmx_version = '08'  # Safe fallback for ESXi 5.0+
+
+        logger.info(f"[OVF-EXPORT] VM hardware version: vmx-{vmx_version} (ensures ESXi 5.0+ compatibility)")
+
         # Basic OVF template with proper XML structure
         ovf_template = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Envelope vmw:buildId="build-123456" xmlns="http://schemas.dmtf.org/ovf/envelope/1" xmlns:cim="http://schemas.dmtf.org/wbem/wscim/1/common" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1" xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:vmw="http://www.vmware.com/schema/ovf" xmlns:vssd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -488,7 +498,7 @@ class OVFExportLeaseService:
       <System>
         <vssd:ElementName>Virtual Hardware Family</vssd:ElementName>
         <vssd:InstanceID>0</vssd:InstanceID>
-        <vssd:VirtualSystemType>vmx-13</vssd:VirtualSystemType>
+        <vssd:VirtualSystemType>vmx-""" + vmx_version + """</vssd:VirtualSystemType>
       </System>
       <Item>
         <rasd:AllocationUnits>hertz * 10^6</rasd:AllocationUnits>

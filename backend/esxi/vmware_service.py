@@ -850,6 +850,14 @@ class VMwareService:
         num_cpus = vm.summary.config.numCpu if hasattr(vm.summary.config, 'numCpu') else 1
         guest_id = vm.summary.config.guestId if hasattr(vm.summary.config, 'guestId') else 'otherGuest'
 
+        # Detect VM hardware version for ESXi compatibility (5.0+)
+        # ESXi 5.0=vmx-08, 5.1=vmx-09, 5.5=vmx-10, 6.0=vmx-11, 6.5=vmx-13, 6.7=vmx-14, 7.0=vmx-17+, 8.0=vmx-20
+        vm_version = vm.config.version if hasattr(vm.config, 'version') else 'vmx-08'
+        if isinstance(vm_version, str) and 'vmx-' in vm_version:
+            vmx_version = vm_version.split('vmx-')[1]
+        else:
+            vmx_version = '08'  # Safe fallback for ESXi 5.0+
+
         ovf_template += f'''  </DiskSection>
   <NetworkSection>
     <Info>The list of logical networks</Info>
@@ -868,7 +876,7 @@ class VMwareService:
       <System>
         <vssd:ElementName>Virtual Hardware Family</vssd:ElementName>
         <vssd:InstanceID>0</vssd:InstanceID>
-        <vssd:VirtualSystemType>vmx-13</vssd:VirtualSystemType>
+        <vssd:VirtualSystemType>vmx-{vmx_version}</vssd:VirtualSystemType>
       </System>
       <Item>
         <rasd:AllocationUnits>hertz * 10^6</rasd:AllocationUnits>
