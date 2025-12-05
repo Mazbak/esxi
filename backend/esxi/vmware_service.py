@@ -1385,23 +1385,10 @@ class VMwareService:
                 logger.info(f"[DEPLOY] Upload {idx+1}/{len(files_to_upload)}: {os.path.basename(file_path)}")
                 logger.info(f"[DEPLOY] URL: {file_url}")
 
-                # Uploader le fichier via HTTP PUT avec configuration SSL robuste
-                import ssl
-                from requests.adapters import HTTPAdapter
-
-                class TLSAdapter(HTTPAdapter):
-                    """Adaptateur HTTP avec SSL/TLS permissif pour ESXi"""
-                    def init_poolmanager(self, *args, **kwargs):
-                        # Configuration SSL très permissive pour ESXi
-                        kwargs['ssl_version'] = ssl.PROTOCOL_TLS
-                        kwargs['cert_reqs'] = ssl.CERT_NONE
-                        kwargs['check_hostname'] = False
-                        kwargs['assert_hostname'] = False
-                        return super().init_poolmanager(*args, **kwargs)
-
+                # Configuration de la session HTTP avec SSL désactivé
                 session = requests.Session()
                 session.verify = False
-                session.mount('https://', TLSAdapter())
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
                 with open(file_path, 'rb') as f:
                     headers = {
@@ -1440,14 +1427,17 @@ class VMwareService:
                                         pass
 
                     try:
-                        response = session.put(file_url, data=upload_in_chunks(), headers=headers, timeout=300)
+                        response = session.put(file_url, data=upload_in_chunks(), headers=headers, timeout=600)
 
                         if response.status_code not in [200, 201]:
                             logger.error(f"[DEPLOY] Erreur HTTP lors de l'upload: {response.status_code}")
+                            logger.error(f"[DEPLOY] Response: {response.text[:500]}")
                             lease.HttpNfcLeaseAbort()
                             return False
                     except Exception as e:
                         logger.error(f"[DEPLOY] Erreur lors de l'upload: {e}")
+                        import traceback
+                        logger.error(f"[DEPLOY] Traceback: {traceback.format_exc()}")
                         lease.HttpNfcLeaseAbort()
                         return False
 
