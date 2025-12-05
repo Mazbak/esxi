@@ -1527,6 +1527,7 @@ class VMwareService:
                                 '--insecure',  # Ignore SSL verification
                                 '-H', f'Content-Type: {headers["Content-Type"]}',
                                 '-H', f'Content-Length: {headers["Content-Length"]}',
+                                '-H', 'Overwrite: t',  # Allow overwriting existing files
                                 '--upload-file', file_path,
                                 '--max-time', '600',
                                 '--connect-timeout', '30',
