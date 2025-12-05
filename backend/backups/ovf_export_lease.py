@@ -506,9 +506,17 @@ class OVFExportLeaseService:
         <rasd:ResourceType>4</rasd:ResourceType>
         <rasd:VirtualQuantity>""" + str(memory_mb) + """</rasd:VirtualQuantity>
       </Item>
+      <Item>
+        <rasd:Address>0</rasd:Address>
+        <rasd:Description>SCSI Controller</rasd:Description>
+        <rasd:ElementName>SCSI Controller 0</rasd:ElementName>
+        <rasd:InstanceID>3</rasd:InstanceID>
+        <rasd:ResourceSubType>lsilogic</rasd:ResourceSubType>
+        <rasd:ResourceType>6</rasd:ResourceType>
+      </Item>
 """
 
-        # Add disk controllers and disks
+        # Add disks
         for i, filename, size_bytes in file_refs:
             item_id = 3 + i
             ovf_template += f"""      <Item>

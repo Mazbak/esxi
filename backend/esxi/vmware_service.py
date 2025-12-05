@@ -1117,6 +1117,18 @@ class VMwareService:
             else:
                 logger.warning("[DEPLOY] ⚠️ AUCUNE DiskSection trouvée dans OVF!")
 
+            # DEBUG: Vérifier si le contrôleur SCSI est présent (CRITIQUE pour que ESXi crée les disques!)
+            if '<rasd:ResourceType>6</rasd:ResourceType>' in ovf_descriptor:
+                logger.info("[DEPLOY] Contrôleur SCSI trouvé dans OVF")
+                # Afficher la section du contrôleur
+                scsi_start = ovf_descriptor.find('<rasd:ResourceType>6</rasd:ResourceType>') - 200
+                scsi_end = ovf_descriptor.find('<rasd:ResourceType>6</rasd:ResourceType>') + 200
+                logger.info(f"[DEPLOY] Section contrôleur SCSI:\n{ovf_descriptor[max(0, scsi_start):scsi_end]}")
+            else:
+                logger.error("[DEPLOY] AUCUN contrôleur SCSI trouvé dans OVF - C'EST LE PROBLÈME !")
+                logger.error("[DEPLOY] Sans contrôleur SCSI, ESXi ne peut pas créer les disques")
+                logger.error("[DEPLOY] L'OVF doit avoir un Item avec ResourceType=6 avant les disques")
+
             if progress_callback:
                 progress_callback(10)
 
