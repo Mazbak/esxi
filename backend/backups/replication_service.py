@@ -120,6 +120,10 @@ class ReplicationService:
             total_size = sum(d.targetSize for d in device_urls if hasattr(d, 'targetSize'))
             downloaded = 0
             last_lease_update = 0  # Dernier pourcentage où on a mis à jour le lease
+            last_ui_update = 0  # Dernier pourcentage où on a mis à jour l'UI
+            chunk_counter = 0  # Compteur de chunks
+
+            logger.info(f"[REPLICATION] Taille totale à télécharger: {total_size / (1024*1024):.2f} MB")
 
             for device_url in device_urls:
                 if not device_url.url.endswith('.vmdk'):
@@ -144,35 +148,49 @@ class ReplicationService:
                 file_size = int(response.headers.get('content-length', 0))
 
                 with open(local_path, 'wb') as f:
-                    chunk_size = 8192
+                    chunk_size = 65536  # 64KB chunks pour meilleure performance
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
+                            chunk_counter += 1
 
                             # Mettre à jour la progression du lease ET du callback
                             if total_size > 0:
                                 # Calculer le pourcentage pour le lease (0-100)
                                 lease_progress = int((downloaded / total_size) * 100)
 
-                                # Mettre à jour le lease tous les 5% pour éviter trop d'appels
-                                if lease_progress >= last_lease_update + 5:
+                                # Mettre à jour le lease tous les 2% pour garder le lease actif
+                                if lease_progress >= last_lease_update + 2:
                                     try:
                                         lease.HttpNfcLeaseProgress(lease_progress)
                                         last_lease_update = lease_progress
+                                        logger.debug(f"[REPLICATION] Lease progress: {lease_progress}%")
                                     except:
                                         pass  # Ignorer les erreurs de mise à jour du lease
 
-                                # Mettre à jour le callback UI (25-60%)
-                                if progress_callback:
-                                    progress_pct = 25 + (35 * downloaded / total_size)
-                                    progress_callback(progress_pct, 'exporting', f'Export VMDK: {filename}...')
+                                # Calculer la progression UI (25-60%)
+                                progress_pct = 25 + (35 * downloaded / total_size)
+
+                                # Mettre à jour l'UI tous les 1% ou tous les 50 chunks (environ 3MB)
+                                if (progress_pct >= last_ui_update + 1) or (chunk_counter >= 50):
+                                    if progress_callback:
+                                        downloaded_mb = downloaded / (1024 * 1024)
+                                        total_mb = total_size / (1024 * 1024)
+                                        progress_callback(
+                                            progress_pct,
+                                            'exporting',
+                                            f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)'
+                                        )
+                                        last_ui_update = progress_pct
+                                        chunk_counter = 0
 
                 vmdk_files.append({
                     'path': local_path,
                     'filename': filename,
                     'size': file_size
                 })
+                logger.info(f"[REPLICATION] {filename} téléchargé: {file_size / (1024*1024):.2f} MB")
 
             # Créer le descripteur OVF
             ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
@@ -356,12 +374,20 @@ class ReplicationService:
             if progress_callback:
                 progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
 
+            # Créer un callback wrapper pour mapper 0-100% du déploiement vers 75-90% de la progression totale
+            def deploy_progress_callback(deploy_pct, status, message):
+                if progress_callback:
+                    # Mapper 0-100% du déploiement vers 75-90% de la progression totale
+                    total_pct = 75 + (15 * deploy_pct / 100)
+                    progress_callback(total_pct, status, message)
+
             deploy_success = vmware_service.deploy_ovf(
                 ovf_path=ovf_path,
                 vm_name=replica_vm_name,
                 datastore_name=dest_datastore,
                 network_name='VM Network',
-                power_on=False  # Ne pas démarrer la replica automatiquement
+                power_on=False,  # Ne pas démarrer la replica automatiquement
+                progress_callback=deploy_progress_callback
             )
 
             if not deploy_success:
