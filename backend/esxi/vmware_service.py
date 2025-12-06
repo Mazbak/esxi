@@ -1076,7 +1076,7 @@ class VMwareService:
         vm = search_index.FindByUuid(None, vm_uuid, True, True)
         return vm
 
-    def deploy_ovf(self, ovf_path, vm_name, datastore_name, network_name="VM Network", power_on=False, progress_callback=None):
+    def deploy_ovf(self, ovf_path, vm_name, datastore_name, network_name="VM Network", power_on=False, progress_callback=None, restore_id=None):
         """
         Déploie un OVF sur ESXi (restauration d'une sauvegarde).
 
@@ -1087,6 +1087,7 @@ class VMwareService:
             network_name: Nom du réseau à utiliser (par défaut: "VM Network")
             power_on: Démarrer la VM après déploiement
             progress_callback: Fonction callback pour la progression
+            restore_id: ID de restauration pour vérifier l'annulation
 
         Returns:
             True si succès, False sinon
@@ -1096,6 +1097,13 @@ class VMwareService:
             import requests
             import urllib3
             from urllib.parse import quote
+            from django.core.cache import cache
+
+            # Fonction pour vérifier si une annulation a été demandée
+            def is_cancelled():
+                if restore_id:
+                    return cache.get(f'restore_cancel_{restore_id}', False)
+                return False
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1250,6 +1258,11 @@ class VMwareService:
             if progress_callback:
                 progress_callback(1.8)
 
+            # Vérifier annulation avant de créer le lease
+            if is_cancelled():
+                logger.warning("[DEPLOY] Annulation détectée avant création du lease")
+                return False
+
             # Créer le lease d'import
             logger.info("[DEPLOY] Création du lease d'import...")
             lease = resource_pool.ImportVApp(
@@ -1264,6 +1277,12 @@ class VMwareService:
             logger.info("[DEPLOY] Attente que le lease soit prêt...")
             wait_count = 0
             while lease.state == vim.HttpNfcLease.State.initializing:
+                # Vérifier annulation pendant l'attente
+                if is_cancelled():
+                    logger.warning("[DEPLOY] Annulation détectée pendant attente du lease")
+                    lease.HttpNfcLeaseAbort()
+                    return False
+
                 time.sleep(1)
                 wait_count += 1
                 # Progression graduelle pendant l'attente du lease (1.9% -> 2%)
@@ -1430,10 +1449,10 @@ class VMwareService:
                             nonlocal uploaded_bytes
                             uploaded_bytes += len(chunk)
 
-                            # Mettre à jour la progression
+                            # Mettre à jour la progression (2-94% au lieu de 25-95%)
                             if total_bytes_to_upload > 0:
                                 lease_progress = int((uploaded_bytes / total_bytes_to_upload) * 100)
-                                global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
+                                global_progress = 2 + int((uploaded_bytes / total_bytes_to_upload) * 92)
 
                                 if progress_callback:
                                     progress_callback(global_progress)
@@ -1584,13 +1603,23 @@ class VMwareService:
 
                             # Thread pour estimer la progression basée sur le temps
                             def estimate_progress():
-                                nonlocal last_progress
+                                nonlocal last_progress, upload_active
                                 # Vitesse conservatrice pour éviter d'atteindre 94% trop vite
                                 # 10 MB/s = vitesse moyenne réaliste pour réseau local/WAN
                                 estimated_speed_mbps = 10
                                 estimated_total_time = (file_size / (estimated_speed_mbps * 1024 * 1024))  # secondes
 
                                 while upload_active:
+                                    # Vérifier annulation
+                                    if is_cancelled():
+                                        logger.warning("[DEPLOY] Annulation détectée pendant l'upload")
+                                        upload_active = False
+                                        try:
+                                            process.terminate()  # Arrêter curl
+                                        except:
+                                            pass
+                                        break
+
                                     elapsed = time_module.time() - start_time
 
                                     # Utiliser une courbe asymptotique au lieu d'une progression linéaire
@@ -1613,7 +1642,14 @@ class VMwareService:
 
                             # Thread pour maintenir le lease actif (keep-alive toutes les 30s)
                             def keep_lease_alive():
+                                nonlocal keep_alive_active
                                 while keep_alive_active:
+                                    # Vérifier annulation
+                                    if is_cancelled():
+                                        logger.warning("[DEPLOY] Annulation détectée dans keep-alive")
+                                        keep_alive_active = False
+                                        break
+
                                     try:
                                         if lease.state == vim.HttpNfcLease.State.ready:
                                             # Mettre à jour la progression du lease pour le garder actif
@@ -1667,7 +1703,12 @@ class VMwareService:
 
                             logger.info(f"[DEPLOY] Code HTTP: {http_code}")
 
-                            if process.returncode == 0 and http_code in [200, 201]:
+                            # Vérifier si annulé (process.returncode peut être négatif si terminé)
+                            if is_cancelled():
+                                logger.warning("[DEPLOY] Annulation détectée après upload")
+                                upload_success = False
+                                last_error = "Annulé par l'utilisateur"
+                            elif process.returncode == 0 and http_code in [200, 201]:
                                 upload_success = True
                                 uploaded_bytes += file_size
                                 logger.info(f"[DEPLOY] [OK] Upload réussi avec curl (HTTP {http_code})")

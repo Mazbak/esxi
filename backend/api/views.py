@@ -377,7 +377,8 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
                         datastore_name=datastore_name,
                         network_name=network_name,
                         power_on=power_on,
-                        progress_callback=progress_callback
+                        progress_callback=progress_callback,
+                        restore_id=restore_id  # Passer l'ID pour vérifier l'annulation
                     )
 
                     if success:
@@ -451,6 +452,47 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
             )
 
         return Response(progress_data)
+
+    @action(detail=False, methods=['post'], url_path='cancel-restore/(?P<restore_id>[^/.]+)')
+    def cancel_restore(self, request, restore_id=None):
+        """Annule une restauration en cours"""
+        try:
+            # Récupérer les données de progression
+            progress_data = cache.get(f'restore_progress_{restore_id}')
+
+            if progress_data is None:
+                return Response(
+                    {'status': 'error', 'message': 'ID de restauration introuvable ou expiré'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Vérifier si la restauration est annulable
+            if progress_data['status'] in ['completed', 'error', 'cancelled']:
+                return Response(
+                    {'status': 'error', 'message': f'La restauration est déjà {progress_data["status"]}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Marquer comme annulée dans le cache
+            logger.info(f"[RESTORE] Annulation demandée pour: {restore_id}")
+            cache.set(f'restore_cancel_{restore_id}', True, timeout=3600)
+            cache.set(f'restore_progress_{restore_id}', {
+                'progress': progress_data.get('progress', 0),
+                'status': 'cancelled',
+                'message': 'Restauration annulée par l\'utilisateur'
+            }, timeout=3600)
+
+            return Response({
+                'status': 'success',
+                'message': 'Demande d\'annulation envoyée'
+            })
+
+        except Exception as e:
+            logger.exception(f"[RESTORE] Erreur lors de l'annulation: {str(e)}")
+            return Response(
+                {'status': 'error', 'message': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ==========================================================
