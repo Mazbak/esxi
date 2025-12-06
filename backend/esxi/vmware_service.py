@@ -1547,14 +1547,17 @@ class VMwareService:
                                 '-H', f'Content-Length: {headers["Content-Length"]}',
                                 '-H', 'Overwrite: t',  # Allow overwriting existing files
                                 '--upload-file', file_path,
-                                '--max-time', '600',
+                                '--max-time', '3600',  # Timeout global de 1 heure
                                 '--connect-timeout', '30',
+                                '--retry', '3',  # Réessayer 3 fois en cas d'échec temporaire
+                                '--retry-delay', '5',  # Délai de 5s entre les retries
                                 '-w', '\n%{http_code}',  # Write HTTP code on new line
                                 '--progress-bar',  # Barre de progression simple
                                 file_url
                             ]
 
                             logger.info(f"[DEPLOY] Démarrage de l'upload avec curl...")
+                            logger.info(f"[DEPLOY] Taille du fichier: {file_size / (1024*1024):.2f} MB")
 
                             # Lancer curl
                             process = subprocess.Popen(
@@ -1568,8 +1571,11 @@ class VMwareService:
                             # Lire stderr en temps réel pour suivre la progression
                             import threading
                             stderr_lines = []
+                            last_progress = 0
+                            keep_alive_active = True
 
                             def read_stderr():
+                                nonlocal last_progress
                                 for line in process.stderr:
                                     stderr_lines.append(line)
                                     # Parser la progression de curl (format: ######## 50.0%)
@@ -1578,6 +1584,7 @@ class VMwareService:
                                             # Extraire le pourcentage de la ligne
                                             percent_str = line.strip().split()[-1].replace('%', '')
                                             curl_percent = float(percent_str)
+                                            last_progress = curl_percent
 
                                             # Calculer la progression globale
                                             # Upload = 25% à 95% (70% du total)
@@ -1589,18 +1596,43 @@ class VMwareService:
                                         except:
                                             pass
 
-                            # Démarrer le thread de lecture stderr
+                            # Thread pour maintenir le lease actif (keep-alive toutes les 30s)
+                            def keep_lease_alive():
+                                while keep_alive_active:
+                                    try:
+                                        if lease.state == vim.HttpNfcLease.State.ready:
+                                            # Mettre à jour la progression du lease pour le garder actif
+                                            lease.HttpNfcLeaseProgress(int(last_progress))
+                                            logger.debug(f"[DEPLOY] Lease keep-alive envoyé ({last_progress}%)")
+                                    except Exception as e:
+                                        logger.warning(f"[DEPLOY] Erreur keep-alive lease: {e}")
+                                    time.sleep(30)  # Toutes les 30 secondes
+
+                            # Démarrer les threads
                             stderr_thread = threading.Thread(target=read_stderr)
                             stderr_thread.daemon = True
                             stderr_thread.start()
 
+                            keep_alive_thread = threading.Thread(target=keep_lease_alive)
+                            keep_alive_thread.daemon = True
+                            keep_alive_thread.start()
+
                             # Attendre la fin et récupérer stdout
                             stdout, _ = process.communicate()
+
+                            # Arrêter le keep-alive
+                            keep_alive_active = False
+                            keep_alive_thread.join(timeout=1)
+
                             stderr_thread.join(timeout=1)
                             stderr = ''.join(stderr_lines)
 
                             # Debug: afficher résultat
                             logger.info(f"[DEPLOY] Curl terminé avec code: {process.returncode}")
+
+                            # Log stderr pour debug (premiers 2000 caractères)
+                            if stderr:
+                                logger.info(f"[DEPLOY] Curl stderr (extrait): {stderr[-2000:]}")
 
                             # Extraire le code HTTP de la dernière ligne de stdout
                             http_code = 0
@@ -1623,15 +1655,17 @@ class VMwareService:
                                     global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
                                     progress_callback(global_progress)
                             else:
-                                logger.warning(f"[DEPLOY] Échec curl: code={process.returncode}, HTTP={http_code}")
-                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}"
+                                logger.error(f"[DEPLOY] ✗ Échec curl: return_code={process.returncode}, HTTP={http_code}")
+                                logger.error(f"[DEPLOY] Stderr complet: {stderr}")
+                                logger.error(f"[DEPLOY] Stdout: {stdout[:500] if stdout else '(empty)'}")
+                                last_error = f"curl failed: return={process.returncode}, HTTP={http_code}, stderr={stderr[:200]}"
                         else:
                             logger.warning(f"[DEPLOY] curl non disponible sur ce système")
                             last_error = "curl not found"
 
                     except Exception as e:
-                        logger.warning(f"[DEPLOY] Échec curl: {e}")
-                        last_error = str(e)
+                        logger.exception(f"[DEPLOY] Exception pendant upload curl: {e}")
+                        last_error = f"Exception: {str(e)}"
 
                 # Si toutes les méthodes échouent
                 if not upload_success:
