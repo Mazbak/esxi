@@ -119,6 +119,7 @@ class ReplicationService:
             device_urls = lease.info.deviceUrl
             total_size = sum(d.targetSize for d in device_urls if hasattr(d, 'targetSize'))
             downloaded = 0
+            last_lease_update = 0  # Dernier pourcentage où on a mis à jour le lease
 
             for device_url in device_urls:
                 if not device_url.url.endswith('.vmdk'):
@@ -149,11 +150,23 @@ class ReplicationService:
                             f.write(chunk)
                             downloaded += len(chunk)
 
-                            # Mettre à jour la progression
-                            if total_size > 0 and progress_callback:
-                                # 25-60% pour l'export
-                                progress_pct = 25 + (35 * downloaded / total_size)
-                                progress_callback(progress_pct, 'exporting', f'Export VMDK: {filename}...')
+                            # Mettre à jour la progression du lease ET du callback
+                            if total_size > 0:
+                                # Calculer le pourcentage pour le lease (0-100)
+                                lease_progress = int((downloaded / total_size) * 100)
+
+                                # Mettre à jour le lease tous les 5% pour éviter trop d'appels
+                                if lease_progress >= last_lease_update + 5:
+                                    try:
+                                        lease.HttpNfcLeaseProgress(lease_progress)
+                                        last_lease_update = lease_progress
+                                    except:
+                                        pass  # Ignorer les erreurs de mise à jour du lease
+
+                                # Mettre à jour le callback UI (25-60%)
+                                if progress_callback:
+                                    progress_pct = 25 + (35 * downloaded / total_size)
+                                    progress_callback(progress_pct, 'exporting', f'Export VMDK: {filename}...')
 
                 vmdk_files.append({
                     'path': local_path,
@@ -165,14 +178,24 @@ class ReplicationService:
             ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
             self._create_simple_ovf_descriptor(vm_obj, vmdk_files, ovf_path)
 
-            # Compléter le lease
-            lease.HttpNfcLeaseComplete()
+            # Compléter le lease seulement s'il est encore actif
+            try:
+                if lease.state == vim.HttpNfcLease.State.ready:
+                    lease.HttpNfcLeaseComplete()
+                    logger.info(f"[REPLICATION] Lease complété avec succès")
+            except Exception as lease_err:
+                logger.warning(f"[REPLICATION] Impossible de compléter le lease (probablement déjà fermé): {lease_err}")
 
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
             return ovf_path
 
         except Exception as e:
-            lease.HttpNfcLeaseAbort()
+            # Annuler le lease seulement s'il est encore actif
+            try:
+                if lease.state in [vim.HttpNfcLease.State.ready, vim.HttpNfcLease.State.initializing]:
+                    lease.HttpNfcLeaseAbort()
+            except:
+                pass  # Ignorer les erreurs lors de l'annulation
             raise
 
     def _create_simple_ovf_descriptor(self, vm_obj, vmdk_files, ovf_path):
