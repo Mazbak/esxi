@@ -1104,7 +1104,7 @@ class VMwareService:
             logger.info(f"[DEPLOY] Datastore: {datastore_name}")
 
             if progress_callback:
-                progress_callback(2)
+                progress_callback(0)
 
             # Vérifier que le fichier OVF existe
             if not os.path.exists(ovf_path):
@@ -1126,7 +1126,7 @@ class VMwareService:
                 logger.warning("[DEPLOY] AUCUNE DiskSection trouvée dans OVF!")
 
             if progress_callback:
-                progress_callback(5)
+                progress_callback(0.5)
 
             # DEBUG: Vérifier si le contrôleur SCSI est présent (CRITIQUE pour que ESXi crée les disques!)
             if '<rasd:ResourceType>6</rasd:ResourceType>' in ovf_descriptor:
@@ -1141,7 +1141,7 @@ class VMwareService:
                 logger.error("[DEPLOY] L'OVF doit avoir un Item avec ResourceType=6 avant les disques")
 
             if progress_callback:
-                progress_callback(8)
+                progress_callback(1)
 
             # Récupérer le datastore
             logger.info(f"[DEPLOY] Recherche du datastore {datastore_name}...")
@@ -1165,7 +1165,7 @@ class VMwareService:
                 return False
 
             if progress_callback:
-                progress_callback(12)
+                progress_callback(1.2)
 
             # Préparer les paramètres d'import
             logger.info("[DEPLOY] Préparation des paramètres d'import...")
@@ -1210,7 +1210,7 @@ class VMwareService:
                 spec_params.networkMapping = []
 
             if progress_callback:
-                progress_callback(15)
+                progress_callback(1.5)
 
             # Parser l'OVF et créer les spécifications
             logger.info("[DEPLOY] Parsing de l'OVF et création des spécifications...")
@@ -1232,7 +1232,7 @@ class VMwareService:
                 logger.warning(f"[DEPLOY] WARNINGS lors de la création des spécifications: {warnings}")
 
             if progress_callback:
-                progress_callback(18)
+                progress_callback(1.7)
 
             # DEBUG: Vérifier ce qui est dans importSpec
             logger.info(f"[DEPLOY] ImportSpec créé:")
@@ -1248,7 +1248,7 @@ class VMwareService:
                                 logger.info(f"[DEPLOY]     Device {idx+1}: {type(dev_change.device).__name__}")
 
             if progress_callback:
-                progress_callback(20)
+                progress_callback(1.8)
 
             # Créer le lease d'import
             logger.info("[DEPLOY] Création du lease d'import...")
@@ -1258,7 +1258,7 @@ class VMwareService:
             )
 
             if progress_callback:
-                progress_callback(22)
+                progress_callback(1.9)
 
             # Attendre que le lease soit prêt
             logger.info("[DEPLOY] Attente que le lease soit prêt...")
@@ -1266,9 +1266,9 @@ class VMwareService:
             while lease.state == vim.HttpNfcLease.State.initializing:
                 time.sleep(1)
                 wait_count += 1
-                # Progression graduelle pendant l'attente du lease
+                # Progression graduelle pendant l'attente du lease (1.9% -> 2%)
                 if progress_callback and wait_count % 2 == 0:
-                    current_progress = min(24, 22 + (wait_count // 2))
+                    current_progress = min(2, 1.9 + (wait_count * 0.01))
                     progress_callback(current_progress)
 
             if lease.state != vim.HttpNfcLease.State.ready:
@@ -1280,7 +1280,7 @@ class VMwareService:
             logger.info("[DEPLOY] Lease prêt, début de l'upload...")
 
             if progress_callback:
-                progress_callback(25)
+                progress_callback(2)
 
             # Uploader les fichiers VMDK
             lease_info = lease.info
@@ -1585,22 +1585,29 @@ class VMwareService:
                             # Thread pour estimer la progression basée sur le temps
                             def estimate_progress():
                                 nonlocal last_progress
-                                # Estimer vitesse d'upload: 20 MB/s (réseau gigabit local)
-                                estimated_speed_mbps = 20
+                                # Vitesse conservatrice pour éviter d'atteindre 94% trop vite
+                                # 10 MB/s = vitesse moyenne réaliste pour réseau local/WAN
+                                estimated_speed_mbps = 10
+                                estimated_total_time = (file_size / (estimated_speed_mbps * 1024 * 1024))  # secondes
 
                                 while upload_active:
                                     elapsed = time_module.time() - start_time
-                                    estimated_uploaded = elapsed * estimated_speed_mbps * 1024 * 1024  # en bytes
-                                    curl_percent = min(99, (estimated_uploaded / file_size) * 100)
+
+                                    # Utiliser une courbe asymptotique au lieu d'une progression linéaire
+                                    # Cela ralentit progressivement vers 94% sans jamais l'atteindre
+                                    # Formule: progress = 94 * (1 - e^(-2*elapsed/estimated_time))
+                                    import math
+                                    progress_ratio = 1 - math.exp(-2 * elapsed / max(estimated_total_time, 1))
+                                    curl_percent = min(94, progress_ratio * 94)
                                     last_progress = curl_percent
 
                                     # Calculer la progression globale
-                                    # Upload = 25% à 95% (70% du total)
+                                    # Upload = 2% à 94% (92% du total)
                                     file_progress = (uploaded_bytes + (file_size * curl_percent / 100)) / total_bytes_to_upload
-                                    global_progress = 25 + int(file_progress * 70)
+                                    global_progress = 2 + int(file_progress * 92)
 
                                     if progress_callback:
-                                        progress_callback(min(94, global_progress))  # Max 94% pendant upload
+                                        progress_callback(global_progress)
 
                                     time.sleep(2)  # Mise à jour toutes les 2 secondes
 
@@ -1667,7 +1674,7 @@ class VMwareService:
 
                                 # Update progress to file completion
                                 if progress_callback and total_bytes_to_upload > 0:
-                                    global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
+                                    global_progress = 2 + int((uploaded_bytes / total_bytes_to_upload) * 92)
                                     progress_callback(global_progress)
                             else:
                                 logger.error(f"[DEPLOY] [ERREUR] Échec curl: return_code={process.returncode}, HTTP={http_code}")
@@ -1696,14 +1703,14 @@ class VMwareService:
             lease.HttpNfcLeaseComplete()
 
             if progress_callback:
-                progress_callback(96)
+                progress_callback(94)
 
             # Vérification finale
             logger.info("[DEPLOY] Vérification de la VM créée...")
             time.sleep(0.5)
 
             if progress_callback:
-                progress_callback(98)
+                progress_callback(97)
 
             # Démarrer la VM si demandé
             if power_on:
