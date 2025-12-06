@@ -1585,22 +1585,29 @@ class VMwareService:
                             # Thread pour estimer la progression basée sur le temps
                             def estimate_progress():
                                 nonlocal last_progress
-                                # Estimer vitesse d'upload: 20 MB/s (réseau gigabit local)
-                                estimated_speed_mbps = 20
+                                # Vitesse conservatrice pour éviter d'atteindre 94% trop vite
+                                # 10 MB/s = vitesse moyenne réaliste pour réseau local/WAN
+                                estimated_speed_mbps = 10
+                                estimated_total_time = (file_size / (estimated_speed_mbps * 1024 * 1024))  # secondes
 
                                 while upload_active:
                                     elapsed = time_module.time() - start_time
-                                    estimated_uploaded = elapsed * estimated_speed_mbps * 1024 * 1024  # en bytes
-                                    curl_percent = min(99, (estimated_uploaded / file_size) * 100)
+
+                                    # Utiliser une courbe asymptotique au lieu d'une progression linéaire
+                                    # Cela ralentit progressivement vers 93% sans jamais l'atteindre
+                                    # Formule: progress = 93 * (1 - e^(-2*elapsed/estimated_time))
+                                    import math
+                                    progress_ratio = 1 - math.exp(-2 * elapsed / max(estimated_total_time, 1))
+                                    curl_percent = min(93, progress_ratio * 93)
                                     last_progress = curl_percent
 
                                     # Calculer la progression globale
-                                    # Upload = 25% à 95% (70% du total)
+                                    # Upload = 25% à 93% (68% du total, pas 70%)
                                     file_progress = (uploaded_bytes + (file_size * curl_percent / 100)) / total_bytes_to_upload
-                                    global_progress = 25 + int(file_progress * 70)
+                                    global_progress = 25 + int(file_progress * 68)
 
                                     if progress_callback:
-                                        progress_callback(min(94, global_progress))  # Max 94% pendant upload
+                                        progress_callback(global_progress)
 
                                     time.sleep(2)  # Mise à jour toutes les 2 secondes
 
