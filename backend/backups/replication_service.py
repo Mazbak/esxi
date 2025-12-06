@@ -395,7 +395,12 @@ class ReplicationService:
             if progress_callback:
                 progress_callback(65, 'deploying', f'Déploiement de la replica sur {destination_server.hostname}...')
 
-            vmware_service = VMwareService(destination_server)
+            vmware_service = VMwareService(
+                host=destination_server.hostname,
+                user=destination_server.username,
+                password=destination_server.password,
+                port=destination_server.port or 443
+            )
 
             # Récupérer le premier datastore disponible (70%)
             if progress_callback:
