@@ -60,6 +60,7 @@ export const esxiServersAPI = {
   getNetworks: (id) => apiClient.get(`/esxi-servers/${id}/get_networks/`),
   restoreOVF: (id, data) => apiClient.post(`/esxi-servers/${id}/restore_ovf/`, data),
   getRestoreProgress: (restoreId) => apiClient.get(`/esxi-servers/restore-progress/${restoreId}/`),
+  cancelRestore: (restoreId) => apiClient.post(`/esxi-servers/cancel-restore/${restoreId}/`),
 }
 
 // ===========================

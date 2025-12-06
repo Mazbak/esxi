@@ -12,7 +12,7 @@
     <div class="card">
       <h2 class="text-lg font-semibold text-gray-900 mb-6">Restaurer une Sauvegarde</h2>
 
-      <form @submit.prevent="handleRestore" class="space-y-6">
+      <form @submit.prevent="isRestoring ? handleCancel() : handleRestore()" class="space-y-6">
         <!-- Fichier OVF/OVA -->
         <div>
           <label class="label">Fichier de sauvegarde (OVF ou OVA)</label>
@@ -44,7 +44,9 @@
           <button
             type="button"
             @click="openFileBrowser"
+            :disabled="isRestoring"
             class="btn-secondary w-full flex items-center justify-center gap-2"
+            :class="{ 'opacity-50 cursor-not-allowed': isRestoring }"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -60,7 +62,7 @@
         <!-- Serveur ESXi de destination -->
         <div>
           <label class="label">Serveur ESXi de destination</label>
-          <select v-model="form.esxi_server_id" @change="loadDatastores" required class="input-field">
+          <select v-model="form.esxi_server_id" @change="loadDatastores" :disabled="isRestoring" required class="input-field">
             <option value="">Sélectionnez un serveur ESXi</option>
             <option v-for="server in servers" :key="server.id" :value="server.id">
               {{ server.name || server.hostname }} ({{ server.hostname }})
@@ -77,6 +79,7 @@
           <input
             v-model="form.vm_name"
             type="text"
+            :disabled="isRestoring"
             required
             class="input-field"
             placeholder="Ma-VM-Restaurée"
@@ -89,7 +92,7 @@
         <!-- Datastore -->
         <div>
           <label class="label">Datastore de destination</label>
-          <select v-model="form.datastore_name" :disabled="!form.esxi_server_id" required class="input-field">
+          <select v-model="form.datastore_name" :disabled="!form.esxi_server_id || isRestoring" required class="input-field">
             <option value="">{{ form.esxi_server_id ? 'Sélectionnez un datastore' : 'Sélectionnez d\'abord un serveur' }}</option>
             <option v-for="ds in datastores" :key="ds.name" :value="ds.name">
               {{ ds.name }} ({{ ds.free_space }} GB libre / {{ ds.capacity }} GB total)
@@ -103,7 +106,7 @@
         <!-- Réseau -->
         <div>
           <label class="label">Réseau (optionnel)</label>
-          <select v-model="form.network_name" :disabled="!form.esxi_server_id" class="input-field">
+          <select v-model="form.network_name" :disabled="!form.esxi_server_id || isRestoring" class="input-field">
             <option value="VM Network">{{ form.esxi_server_id ? 'VM Network (défaut)' : 'Sélectionnez d\'abord un serveur' }}</option>
             <option v-for="net in networks" :key="net.name" :value="net.name">
               {{ net.name }}
@@ -120,6 +123,7 @@
             v-model="form.power_on"
             type="checkbox"
             id="power_on"
+            :disabled="isRestoring"
             class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label for="power_on" class="ml-2 block text-sm text-gray-900">
@@ -183,15 +187,18 @@
         <div class="flex items-center gap-4">
           <button
             type="submit"
-            :disabled="loading"
-            class="btn-primary flex items-center gap-2"
-            :class="{ 'opacity-50 cursor-not-allowed': loading }"
+            :disabled="loading && !isRestoring"
+            :class="isRestoring ? 'bg-red-600 hover:bg-red-700 text-white' : 'btn-primary'"
+            class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
           >
-            <svg v-if="loading" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg v-if="isRestoring" class="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <svg v-else-if="loading" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <span>{{ loading ? 'Restauration en cours...' : '🔄 Restaurer la VM' }}</span>
+            <span>{{ isRestoring ? '❌ Annuler la restauration' : (loading ? 'Restauration en cours...' : '🔄 Restaurer la VM') }}</span>
           </button>
         </div>
       </form>
@@ -387,6 +394,7 @@ const restoreProgress = ref(0)
 const restoreStatus = ref('')
 const restoreMessage = ref('')
 const isRestoring = ref(false)
+const currentRestoreId = ref(null)  // ID de restauration en cours
 
 const form = reactive({
   ovf_path: '',
@@ -493,6 +501,7 @@ async function handleRestore() {
 
     // Si on a un restore_id, démarrer le polling de la progression
     if (response.data.restore_id) {
+      currentRestoreId.value = response.data.restore_id
       const restoreId = response.data.restore_id
 
       // Polling toutes les 500ms pour récupérer la progression
@@ -505,10 +514,11 @@ async function handleRestore() {
           restoreStatus.value = progressData.status
           restoreMessage.value = progressData.message
 
-          // Arrêter le polling si terminé ou en erreur
-          if (progressData.status === 'completed' || progressData.status === 'error') {
+          // Arrêter le polling si terminé, en erreur ou annulé
+          if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
             clearInterval(pollInterval)
             isRestoring.value = false
+            currentRestoreId.value = null
 
             if (progressData.status === 'completed') {
               success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
@@ -518,6 +528,9 @@ async function handleRestore() {
               setTimeout(() => {
                 resetForm()
               }, 2000)
+            } else if (progressData.status === 'cancelled') {
+              error.value = `⚠️ Restauration annulée par l'utilisateur`
+              toast.warning('Restauration annulée', 3000)
             } else if (progressData.status === 'error') {
               throw new Error(progressData.message)
             }
@@ -526,6 +539,7 @@ async function handleRestore() {
           console.error('Erreur polling progression:', pollErr)
           clearInterval(pollInterval)
           isRestoring.value = false
+          currentRestoreId.value = null
         }
       }, 500)
     } else {
@@ -542,10 +556,27 @@ async function handleRestore() {
   } catch (err) {
     if (pollInterval) clearInterval(pollInterval)
     isRestoring.value = false
+    currentRestoreId.value = null
     error.value = err.response?.data?.error || err.message || 'Erreur lors de la restauration'
     toast.error(`Erreur: ${error.value}`)
   } finally {
     loading.value = false
+  }
+}
+
+// Fonction pour annuler la restauration
+async function handleCancel() {
+  if (!currentRestoreId.value) {
+    toast.error('Aucune restauration en cours')
+    return
+  }
+
+  try {
+    await esxiServersAPI.cancelRestore(currentRestoreId.value)
+    toast.info('Demande d\'annulation envoyée...')
+  } catch (err) {
+    console.error('Erreur annulation:', err)
+    toast.error('Erreur lors de l\'annulation de la restauration')
   }
 }
 
@@ -563,6 +594,7 @@ function resetForm() {
   restoreStatus.value = ''
   restoreMessage.value = ''
   isRestoring.value = false
+  currentRestoreId.value = null
 }
 
 // Charger les chemins de sauvegarde prédéfinis (actifs uniquement)
