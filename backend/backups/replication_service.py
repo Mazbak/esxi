@@ -119,6 +119,11 @@ class ReplicationService:
             device_urls = lease.info.deviceUrl
             total_size = sum(d.targetSize for d in device_urls if hasattr(d, 'targetSize'))
             downloaded = 0
+            last_lease_update = 0  # Dernier pourcentage où on a mis à jour le lease
+            last_ui_update = 0  # Dernier pourcentage où on a mis à jour l'UI
+            chunk_counter = 0  # Compteur de chunks
+
+            logger.info(f"[REPLICATION] Taille totale à télécharger: {total_size / (1024*1024):.2f} MB")
 
             for device_url in device_urls:
                 if not device_url.url.endswith('.vmdk'):
@@ -143,36 +148,72 @@ class ReplicationService:
                 file_size = int(response.headers.get('content-length', 0))
 
                 with open(local_path, 'wb') as f:
-                    chunk_size = 8192
+                    chunk_size = 65536  # 64KB chunks pour meilleure performance
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
+                            chunk_counter += 1
 
-                            # Mettre à jour la progression
-                            if total_size > 0 and progress_callback:
-                                # 25-60% pour l'export
+                            # Mettre à jour la progression du lease ET du callback
+                            if total_size > 0:
+                                # Calculer le pourcentage pour le lease (0-100)
+                                lease_progress = int((downloaded / total_size) * 100)
+
+                                # Mettre à jour le lease tous les 2% pour garder le lease actif
+                                if lease_progress >= last_lease_update + 2:
+                                    try:
+                                        lease.HttpNfcLeaseProgress(lease_progress)
+                                        last_lease_update = lease_progress
+                                        logger.debug(f"[REPLICATION] Lease progress: {lease_progress}%")
+                                    except:
+                                        pass  # Ignorer les erreurs de mise à jour du lease
+
+                                # Calculer la progression UI (25-60%)
                                 progress_pct = 25 + (35 * downloaded / total_size)
-                                progress_callback(progress_pct, 'exporting', f'Export VMDK: {filename}...')
+
+                                # Mettre à jour l'UI tous les 1% ou tous les 50 chunks (environ 3MB)
+                                if (progress_pct >= last_ui_update + 1) or (chunk_counter >= 50):
+                                    if progress_callback:
+                                        downloaded_mb = downloaded / (1024 * 1024)
+                                        total_mb = total_size / (1024 * 1024)
+                                        progress_callback(
+                                            progress_pct,
+                                            'exporting',
+                                            f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)'
+                                        )
+                                        last_ui_update = progress_pct
+                                        chunk_counter = 0
 
                 vmdk_files.append({
                     'path': local_path,
                     'filename': filename,
                     'size': file_size
                 })
+                logger.info(f"[REPLICATION] {filename} téléchargé: {file_size / (1024*1024):.2f} MB")
 
             # Créer le descripteur OVF
             ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
             self._create_simple_ovf_descriptor(vm_obj, vmdk_files, ovf_path)
 
-            # Compléter le lease
-            lease.HttpNfcLeaseComplete()
+            # Compléter le lease seulement s'il est encore actif
+            try:
+                if lease.state == vim.HttpNfcLease.State.ready:
+                    lease.HttpNfcLeaseComplete()
+                    logger.info(f"[REPLICATION] Lease complété avec succès")
+            except Exception as lease_err:
+                logger.warning(f"[REPLICATION] Impossible de compléter le lease (probablement déjà fermé): {lease_err}")
 
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
             return ovf_path
 
         except Exception as e:
-            lease.HttpNfcLeaseAbort()
+            # Annuler le lease seulement s'il est encore actif
+            try:
+                if lease.state in [vim.HttpNfcLease.State.ready, vim.HttpNfcLease.State.initializing]:
+                    lease.HttpNfcLeaseAbort()
+            except:
+                pass  # Ignorer les erreurs lors de l'annulation
             raise
 
     def _create_simple_ovf_descriptor(self, vm_obj, vmdk_files, ovf_path):
@@ -236,6 +277,7 @@ class ReplicationService:
         """
         temp_dir = None
         try:
+            import time
             start_time = timezone.now()
             logger.info(f"[REPLICATION] Démarrage: {replication.name}")
 
@@ -247,12 +289,24 @@ class ReplicationService:
             vm_name = replication.virtual_machine.name
             replica_vm_name = f"{vm_name}_replica"
 
-            # Vérifier si la VM replica existe déjà (5%)
+            # Progression graduelle 0-2%
+            if progress_callback:
+                progress_callback(1, 'initializing', 'Initialisation de la réplication...')
+                time.sleep(0.3)
+                progress_callback(2, 'initializing', 'Vérification des serveurs...')
+
+            # Vérifier si la VM replica existe déjà (3-8%)
             logger.info(f"[REPLICATION] Connexion au serveur destination: {destination_server.hostname}")
             if progress_callback:
-                progress_callback(5, 'connecting', f'Connexion au serveur destination {destination_server.hostname}...')
+                progress_callback(3, 'connecting', f'Connexion au serveur destination...')
+                time.sleep(0.2)
+                progress_callback(5, 'connecting', f'Établissement de la connexion à {destination_server.hostname}...')
 
             dest_si = self._connect_to_server(destination_server)
+
+            if progress_callback:
+                progress_callback(7, 'checking', 'Vérification de la VM replica existante...')
+
             existing_replica = self._get_vm_by_name(dest_si, replica_vm_name)
 
             if existing_replica:
@@ -260,34 +314,59 @@ class ReplicationService:
                 logger.info(f"[REPLICATION] Suppression de l'ancienne replica pour mise à jour...")
 
                 if progress_callback:
+                    progress_callback(8, 'cleaning', 'Préparation de la suppression...')
+                    time.sleep(0.2)
                     progress_callback(10, 'cleaning', 'Suppression de l\'ancienne replica...')
 
                 # Arrêter la VM si elle tourne
                 if existing_replica.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
+                    if progress_callback:
+                        progress_callback(11, 'cleaning', 'Arrêt de l\'ancienne VM replica...')
                     power_off_task = existing_replica.PowerOffVM_Task()
                     while power_off_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
-                        pass
+                        time.sleep(0.1)
 
                 # Supprimer la VM
+                if progress_callback:
+                    progress_callback(13, 'cleaning', 'Suppression des fichiers de la replica...')
                 destroy_task = existing_replica.Destroy_Task()
                 while destroy_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
-                    pass
+                    time.sleep(0.1)
 
                 logger.info(f"[REPLICATION] Ancienne replica supprimée")
+                if progress_callback:
+                    progress_callback(15, 'cleaned', 'Ancienne replica supprimée')
+            else:
+                # Pas de replica existante, progression rapide
+                if progress_callback:
+                    progress_callback(10, 'checking', 'Aucune replica existante trouvée')
+                    time.sleep(0.2)
+                    progress_callback(15, 'ready', 'Prêt pour la réplication')
 
-            # Créer un répertoire temporaire pour l'export OVF (15%)
+            # Créer un répertoire temporaire pour l'export OVF (16-18%)
+            if progress_callback:
+                progress_callback(16, 'preparing', 'Création du répertoire temporaire...')
+
             temp_dir = tempfile.mkdtemp(prefix='replication_')
             logger.info(f"[REPLICATION] Répertoire temporaire: {temp_dir}")
 
             if progress_callback:
-                progress_callback(15, 'preparing', 'Préparation de l\'export...')
+                progress_callback(18, 'preparing', 'Préparation de l\'export OVF...')
+                time.sleep(0.2)
 
-            # Se connecter au serveur source pour l'export (20%)
+            # Se connecter au serveur source pour l'export (19-24%)
             logger.info(f"[REPLICATION] Connexion au serveur source: {source_server.hostname}")
             if progress_callback:
-                progress_callback(20, 'connecting', f'Connexion au serveur source {source_server.hostname}...')
+                progress_callback(19, 'connecting', f'Connexion au serveur source...')
+                time.sleep(0.2)
+                progress_callback(21, 'connecting', f'Établissement de la connexion à {source_server.hostname}...')
 
             source_si = self._connect_to_server(source_server)
+
+            if progress_callback:
+                progress_callback(23, 'connected', 'Serveur source connecté')
+                time.sleep(0.2)
+                progress_callback(24, 'preparing', f'Préparation de l\'export de {vm_name}...')
 
             # Exporter la VM source en OVF (25% → 60%)
             logger.info(f"[REPLICATION] Export de la VM source: {vm_name}")
@@ -333,12 +412,20 @@ class ReplicationService:
             if progress_callback:
                 progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
 
+            # Créer un callback wrapper pour mapper 0-100% du déploiement vers 75-90% de la progression totale
+            def deploy_progress_callback(deploy_pct, status, message):
+                if progress_callback:
+                    # Mapper 0-100% du déploiement vers 75-90% de la progression totale
+                    total_pct = 75 + (15 * deploy_pct / 100)
+                    progress_callback(total_pct, status, message)
+
             deploy_success = vmware_service.deploy_ovf(
                 ovf_path=ovf_path,
                 vm_name=replica_vm_name,
                 datastore_name=dest_datastore,
                 network_name='VM Network',
-                power_on=False  # Ne pas démarrer la replica automatiquement
+                power_on=False,  # Ne pas démarrer la replica automatiquement
+                progress_callback=deploy_progress_callback
             )
 
             if not deploy_success:
@@ -348,16 +435,28 @@ class ReplicationService:
 
             if progress_callback:
                 progress_callback(90, 'deployed', f'VM replica {replica_vm_name} déployée')
+                time.sleep(0.3)
+                progress_callback(92, 'finalizing', 'Vérification de la VM replica...')
+                time.sleep(0.2)
 
-            # Nettoyer le répertoire temporaire (95%)
+            # Nettoyer le répertoire temporaire (93-96%)
             if progress_callback:
-                progress_callback(95, 'cleaning', 'Nettoyage des fichiers temporaires...')
+                progress_callback(93, 'cleaning', 'Début du nettoyage...')
+                time.sleep(0.2)
+                progress_callback(94, 'cleaning', 'Suppression des fichiers temporaires...')
 
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
                 logger.info(f"[REPLICATION] Répertoire temporaire nettoyé")
 
-            # Mettre à jour la réplication
+            if progress_callback:
+                progress_callback(96, 'cleaned', 'Nettoyage terminé')
+                time.sleep(0.2)
+
+            # Mettre à jour la réplication (97-99%)
+            if progress_callback:
+                progress_callback(97, 'updating', 'Mise à jour des métadonnées de réplication...')
+
             end_time = timezone.now()
             duration = (end_time - start_time).total_seconds()
 
@@ -369,10 +468,16 @@ class ReplicationService:
             logger.info(f"[REPLICATION] Terminée: {replication.name} ({duration:.2f}s)")
 
             if progress_callback:
-                progress_callback(100, 'completed', f'Réplication terminée avec succès en {duration:.1f}s')
+                progress_callback(98, 'saving', 'Enregistrement de l\'état de réplication...')
+                time.sleep(0.2)
+                progress_callback(99, 'disconnecting', 'Déconnexion des serveurs...')
 
             # Déconnexion
             Disconnect(dest_si)
+
+            if progress_callback:
+                time.sleep(0.3)
+                progress_callback(100, 'completed', f'✅ Réplication terminée avec succès en {duration:.1f}s')
 
             return {
                 'success': True,
