@@ -1552,7 +1552,7 @@ class VMwareService:
                                 '--retry', '3',  # Réessayer 3 fois en cas d'échec temporaire
                                 '--retry-delay', '5',  # Délai de 5s entre les retries
                                 '-w', '\n%{http_code}',  # Write HTTP code on new line
-                                '--progress-bar',  # Barre de progression simple
+                                '-s',  # Silent (pas de barre de progression)
                                 file_url
                             ]
 
@@ -1560,6 +1560,9 @@ class VMwareService:
                             logger.info(f"[DEPLOY] Taille du fichier: {file_size / (1024*1024):.2f} MB")
 
                             # Lancer curl
+                            import time as time_module
+                            start_time = time_module.time()
+
                             process = subprocess.Popen(
                                 curl_cmd,
                                 stdout=subprocess.PIPE,
@@ -1568,33 +1571,38 @@ class VMwareService:
                                 bufsize=1
                             )
 
-                            # Lire stderr en temps réel pour suivre la progression
+                            # Variables pour suivre la progression
                             import threading
                             stderr_lines = []
                             last_progress = 0
                             keep_alive_active = True
+                            upload_active = True
 
                             def read_stderr():
-                                nonlocal last_progress
                                 for line in process.stderr:
                                     stderr_lines.append(line)
-                                    # Parser la progression de curl (format: ######## 50.0%)
-                                    if '%' in line:
-                                        try:
-                                            # Extraire le pourcentage de la ligne
-                                            percent_str = line.strip().split()[-1].replace('%', '')
-                                            curl_percent = float(percent_str)
-                                            last_progress = curl_percent
 
-                                            # Calculer la progression globale
-                                            # Upload = 25% à 95% (70% du total)
-                                            file_progress = (uploaded_bytes + (file_size * curl_percent / 100)) / total_bytes_to_upload
-                                            global_progress = 25 + int(file_progress * 70)
+                            # Thread pour estimer la progression basée sur le temps
+                            def estimate_progress():
+                                nonlocal last_progress
+                                # Estimer vitesse d'upload: 20 MB/s (réseau gigabit local)
+                                estimated_speed_mbps = 20
 
-                                            if progress_callback:
-                                                progress_callback(global_progress)
-                                        except:
-                                            pass
+                                while upload_active:
+                                    elapsed = time_module.time() - start_time
+                                    estimated_uploaded = elapsed * estimated_speed_mbps * 1024 * 1024  # en bytes
+                                    curl_percent = min(99, (estimated_uploaded / file_size) * 100)
+                                    last_progress = curl_percent
+
+                                    # Calculer la progression globale
+                                    # Upload = 25% à 95% (70% du total)
+                                    file_progress = (uploaded_bytes + (file_size * curl_percent / 100)) / total_bytes_to_upload
+                                    global_progress = 25 + int(file_progress * 70)
+
+                                    if progress_callback:
+                                        progress_callback(min(94, global_progress))  # Max 94% pendant upload
+
+                                    time.sleep(2)  # Mise à jour toutes les 2 secondes
 
                             # Thread pour maintenir le lease actif (keep-alive toutes les 30s)
                             def keep_lease_alive():
@@ -1613,6 +1621,10 @@ class VMwareService:
                             stderr_thread.daemon = True
                             stderr_thread.start()
 
+                            progress_thread = threading.Thread(target=estimate_progress)
+                            progress_thread.daemon = True
+                            progress_thread.start()
+
                             keep_alive_thread = threading.Thread(target=keep_lease_alive)
                             keep_alive_thread.daemon = True
                             keep_alive_thread.start()
@@ -1620,11 +1632,14 @@ class VMwareService:
                             # Attendre la fin et récupérer stdout
                             stdout, _ = process.communicate()
 
-                            # Arrêter le keep-alive
+                            # Arrêter tous les threads
+                            upload_active = False
                             keep_alive_active = False
-                            keep_alive_thread.join(timeout=1)
 
+                            progress_thread.join(timeout=1)
+                            keep_alive_thread.join(timeout=1)
                             stderr_thread.join(timeout=1)
+
                             stderr = ''.join(stderr_lines)
 
                             # Debug: afficher résultat
@@ -1648,14 +1663,14 @@ class VMwareService:
                             if process.returncode == 0 and http_code in [200, 201]:
                                 upload_success = True
                                 uploaded_bytes += file_size
-                                logger.info(f"[DEPLOY] ✓ Upload réussi avec curl (HTTP {http_code})")
+                                logger.info(f"[DEPLOY] [OK] Upload réussi avec curl (HTTP {http_code})")
 
                                 # Update progress to file completion
                                 if progress_callback and total_bytes_to_upload > 0:
                                     global_progress = 25 + int((uploaded_bytes / total_bytes_to_upload) * 70)
                                     progress_callback(global_progress)
                             else:
-                                logger.error(f"[DEPLOY] ✗ Échec curl: return_code={process.returncode}, HTTP={http_code}")
+                                logger.error(f"[DEPLOY] [ERREUR] Échec curl: return_code={process.returncode}, HTTP={http_code}")
                                 logger.error(f"[DEPLOY] Stderr complet: {stderr}")
                                 logger.error(f"[DEPLOY] Stdout: {stdout[:500] if stdout else '(empty)'}")
                                 last_error = f"curl failed: return={process.returncode}, HTTP={http_code}, stderr={stderr[:200]}"
