@@ -34,7 +34,7 @@ class ReplicationService:
         """
         try:
             si = SmartConnect(
-                host=esxi_server.host,
+                host=esxi_server.hostname,
                 user=esxi_server.username,
                 pwd=esxi_server.password,
                 port=esxi_server.port or 443,
@@ -43,7 +43,7 @@ class ReplicationService:
             atexit.register(Disconnect, si)
             return si
         except Exception as e:
-            logger.error(f"Erreur connexion à {esxi_server.host}: {e}")
+            logger.error(f"Erreur connexion à {esxi_server.hostname}: {e}")
             raise
 
     def _get_vm_by_name(self, si, vm_name):
@@ -89,10 +89,10 @@ class ReplicationService:
             destination_server = replication.destination_server
 
             # Se connecter aux serveurs
-            logger.info(f"Connexion au serveur source: {source_server.host}")
+            logger.info(f"Connexion au serveur source: {source_server.hostname}")
             source_si = self._connect_to_server(source_server)
 
-            logger.info(f"Connexion au serveur destination: {destination_server.host}")
+            logger.info(f"Connexion au serveur destination: {destination_server.hostname}")
             dest_si = self._connect_to_server(destination_server)
 
             # Récupérer la VM source
@@ -178,10 +178,10 @@ class ReplicationService:
             vm_name = replication.virtual_machine.name
 
             # Se connecter aux serveurs
-            logger.info(f"Connexion au serveur source: {source_server.host}")
+            logger.info(f"Connexion au serveur source: {source_server.hostname}")
             source_si = self._connect_to_server(source_server)
 
-            logger.info(f"Connexion au serveur destination: {destination_server.host}")
+            logger.info(f"Connexion au serveur destination: {destination_server.hostname}")
             dest_si = self._connect_to_server(destination_server)
 
             # Récupérer les VMs
@@ -193,7 +193,7 @@ class ReplicationService:
                 dest_vm = self._get_vm_by_name(dest_si, vm_name)
 
             if not dest_vm:
-                raise Exception(f"VM de destination non trouvée sur {destination_server.host}")
+                raise Exception(f"VM de destination non trouvée sur {destination_server.hostname}")
 
             # Arrêter la VM source (sauf en mode test)
             if source_vm and source_vm.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
