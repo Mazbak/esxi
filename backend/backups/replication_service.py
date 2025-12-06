@@ -5,6 +5,9 @@ import logging
 import os
 import tempfile
 import shutil
+import requests
+import urllib3
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from django.utils import timezone
 from pyVim.connect import SmartConnect, Disconnect
@@ -14,8 +17,10 @@ import atexit
 
 from esxi.models import VirtualMachine, ESXiServer
 from backups.models import VMReplication, FailoverEvent
-from backups.vm_backup_service import VMBackupService
 from esxi.vmware_service import VMwareService
+
+# Désactiver les warnings SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -75,46 +80,143 @@ class ReplicationService:
         container.Destroy()
         return None
 
-    def _export_vm_to_ovf(self, si, vm_name, export_path):
+    def _export_vm_to_ovf(self, si, vm_name, export_path, esxi_host, esxi_user, esxi_pass, progress_callback=None):
         """
-        Exporter une VM en format OVF en utilisant VMBackupService
+        Exporter une VM en format OVF en utilisant HttpNfcLease API
+        Version simplifiée sans dépendances sur les modèles Django
 
         Args:
             si: ServiceInstance pyVmomi
             vm_name: Nom de la VM à exporter
             export_path: Chemin où exporter l'OVF
+            esxi_host: Hostname du serveur ESXi
+            esxi_user: Username ESXi
+            esxi_pass: Password ESXi
+            progress_callback: Callback optionnel pour progression
 
         Returns:
             str: Chemin vers le fichier OVF généré
         """
-        # Récupérer l'objet VM
         vm_obj = self._get_vm_by_name(si, vm_name)
         if not vm_obj:
             raise Exception(f"VM {vm_name} non trouvée")
 
-        # Créer le service de backup
-        backup_service = VMBackupService(
-            vm_obj=vm_obj,
-            vm_name=vm_name,
-            esxi_server=None,  # Pas utilisé pour l'export simple
-            backup_location=export_path,
-            backup_mode='full'
-        )
+        logger.info(f"[REPLICATION] Début export OVF de {vm_name}")
 
-        # Exporter les VMDKs
-        logger.info(f"[REPLICATION] Téléchargement des VMDKs...")
-        vmdk_files = backup_service.download_vmdk_files()
+        # Créer un lease d'export
+        lease = vm_obj.ExportVm()
 
-        if not vmdk_files:
-            raise Exception("Aucun VMDK exporté")
+        # Attendre que le lease soit prêt
+        while lease.state == vim.HttpNfcLease.State.initializing:
+            pass
 
-        # Créer le descripteur OVF
-        logger.info(f"[REPLICATION] Création du descripteur OVF...")
-        ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
-        backup_service.create_ovf_descriptor(vmdk_files, ovf_path)
+        if lease.state != vim.HttpNfcLease.State.ready:
+            raise Exception(f"Export lease échoué: {lease.state}")
 
-        logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
-        return ovf_path
+        try:
+            # Télécharger les fichiers VMDK
+            vmdk_files = []
+            device_urls = lease.info.deviceUrl
+            total_size = sum(d.targetSize for d in device_urls if hasattr(d, 'targetSize'))
+            downloaded = 0
+
+            for device_url in device_urls:
+                if not device_url.url.endswith('.vmdk'):
+                    continue
+
+                # Remplacer * par l'IP du serveur ESXi
+                url = device_url.url.replace('*', esxi_host)
+                filename = os.path.basename(device_url.targetId)
+                local_path = os.path.join(export_path, filename)
+
+                logger.info(f"[REPLICATION] Téléchargement {filename}...")
+
+                # Télécharger le VMDK
+                response = requests.get(
+                    url,
+                    auth=(esxi_user, esxi_pass),
+                    verify=False,
+                    stream=True
+                )
+                response.raise_for_status()
+
+                file_size = int(response.headers.get('content-length', 0))
+
+                with open(local_path, 'wb') as f:
+                    chunk_size = 8192
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            # Mettre à jour la progression
+                            if total_size > 0 and progress_callback:
+                                # 25-60% pour l'export
+                                progress_pct = 25 + (35 * downloaded / total_size)
+                                progress_callback(progress_pct, 'exporting', f'Export VMDK: {filename}...')
+
+                vmdk_files.append({
+                    'path': local_path,
+                    'filename': filename,
+                    'size': file_size
+                })
+
+            # Créer le descripteur OVF
+            ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
+            self._create_simple_ovf_descriptor(vm_obj, vmdk_files, ovf_path)
+
+            # Compléter le lease
+            lease.HttpNfcLeaseComplete()
+
+            logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
+            return ovf_path
+
+        except Exception as e:
+            lease.HttpNfcLeaseAbort()
+            raise
+
+    def _create_simple_ovf_descriptor(self, vm_obj, vmdk_files, ovf_path):
+        """Créer un descripteur OVF simplifié"""
+        # Créer la structure OVF de base
+        ovf_ns = "http://schemas.dmtf.org/ovf/envelope/1"
+        rasd_ns = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
+        vssd_ns = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData"
+
+        ET.register_namespace('ovf', ovf_ns)
+        ET.register_namespace('rasd', rasd_ns)
+        ET.register_namespace('vssd', vssd_ns)
+
+        root = ET.Element(f"{{{ovf_ns}}}Envelope")
+
+        # Références
+        references = ET.SubElement(root, f"{{{ovf_ns}}}References")
+        for vmdk in vmdk_files:
+            file_elem = ET.SubElement(references, f"{{{ovf_ns}}}File")
+            file_elem.set(f"{{{ovf_ns}}}href", vmdk['filename'])
+            file_elem.set(f"{{{ovf_ns}}}id", vmdk['filename'])
+            file_elem.set(f"{{{ovf_ns}}}size", str(vmdk['size']))
+
+        # DiskSection
+        disk_section = ET.SubElement(root, f"{{{ovf_ns}}}DiskSection")
+        ET.SubElement(disk_section, f"{{{ovf_ns}}}Info").text = "Virtual disk information"
+
+        for i, vmdk in enumerate(vmdk_files):
+            disk = ET.SubElement(disk_section, f"{{{ovf_ns}}}Disk")
+            disk.set(f"{{{ovf_ns}}}diskId", f"vmdisk{i+1}")
+            disk.set(f"{{{ovf_ns}}}fileRef", vmdk['filename'])
+            disk.set(f"{{{ovf_ns}}}capacity", str(vmdk['size']))
+
+        # VirtualSystem
+        vs = ET.SubElement(root, f"{{{ovf_ns}}}VirtualSystem")
+        vs.set(f"{{{ovf_ns}}}id", vm_obj.name)
+        ET.SubElement(vs, f"{{{ovf_ns}}}Info").text = f"Virtual Machine {vm_obj.name}"
+        ET.SubElement(vs, f"{{{ovf_ns}}}Name").text = vm_obj.name
+
+        # Écrire le fichier OVF
+        tree = ET.ElementTree(root)
+        tree.write(ovf_path, encoding='utf-8', xml_declaration=True)
+
+        logger.info(f"[REPLICATION] Descripteur OVF créé: {ovf_path}")
 
     def replicate_vm(self, replication, progress_callback=None):
         """
@@ -192,7 +294,15 @@ class ReplicationService:
             if progress_callback:
                 progress_callback(25, 'exporting', f'Export de la VM {vm_name} en cours...')
 
-            ovf_path = self._export_vm_to_ovf(source_si, vm_name, temp_dir)
+            ovf_path = self._export_vm_to_ovf(
+                source_si,
+                vm_name,
+                temp_dir,
+                source_server.hostname,
+                source_server.username,
+                source_server.password,
+                progress_callback
+            )
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
 
             if progress_callback:
