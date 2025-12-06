@@ -341,17 +341,14 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
             def progress_callback(progress_percent):
                 try:
                     # Messages descriptifs selon l'étape de progression
-                    if progress_percent < 5:
-                        message = 'Initialisation de la restauration...'
-                        status_val = 'starting'
-                    elif progress_percent < 15:
-                        message = 'Analyse du fichier OVF...'
+                    # 0-2%: Préparation
+                    # 2-94%: Transfert
+                    # 94-100%: Finalisation
+                    if progress_percent < 2:
+                        message = 'Préparation de la restauration...'
                         status_val = 'preparing'
-                    elif progress_percent < 25:
-                        message = 'Préparation de la machine virtuelle...'
-                        status_val = 'preparing'
-                    elif progress_percent < 95:
-                        message = f'Transfert des disques vers ESXi... {progress_percent}%'
+                    elif progress_percent < 94:
+                        message = f'Transfert des disques vers ESXi... {int(progress_percent)}%'
                         status_val = 'uploading'
                     elif progress_percent < 100:
                         message = 'Finalisation de la restauration...'
@@ -361,12 +358,12 @@ class ESXiServerViewSet(viewsets.ModelViewSet):
                         status_val = 'completed'
 
                     progress_data = {
-                        'progress': progress_percent,
+                        'progress': int(progress_percent),  # Arrondir pour affichage
                         'status': status_val,
                         'message': message
                     }
                     cache.set(f'restore_progress_{restore_id}', progress_data, timeout=3600)
-                    logger.info(f"[RESTORE] Progression mise à jour: {progress_percent}% (ID: {restore_id})")
+                    logger.info(f"[RESTORE] Progression mise à jour: {int(progress_percent)}% (ID: {restore_id})")
                 except Exception as e:
                     logger.error(f"[RESTORE] Erreur mise à jour progression: {e}")
 
