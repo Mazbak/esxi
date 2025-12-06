@@ -193,15 +193,6 @@
             </svg>
             <span>{{ loading ? 'Restauration en cours...' : '🔄 Restaurer la VM' }}</span>
           </button>
-
-          <button
-            type="button"
-            @click="resetForm"
-            class="btn-secondary"
-            :disabled="loading"
-          >
-            Réinitialiser
-          </button>
         </div>
       </form>
     </div>
