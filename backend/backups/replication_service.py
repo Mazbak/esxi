@@ -172,8 +172,9 @@ class ReplicationService:
                                 # Calculer la progression UI (25-60%)
                                 progress_pct = 25 + (35 * downloaded / total_size)
 
-                                # Mettre à jour l'UI tous les 1% ou tous les 50 chunks (environ 3MB)
-                                if (progress_pct >= last_ui_update + 1) or (chunk_counter >= 50):
+                                # Mettre à jour l'UI très fréquemment : tous les 0.5% OU tous les 10 chunks (~640KB)
+                                # Cela garantit une progression fluide et visible même pour les petits fichiers
+                                if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
                                     if progress_callback:
                                         downloaded_mb = downloaded / (1024 * 1024)
                                         total_mb = total_size / (1024 * 1024)
