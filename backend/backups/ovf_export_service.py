@@ -397,7 +397,9 @@ class OVFExportService:
                 vmdk_filename = os.path.basename(vmdk['filename'])
                 file_path = os.path.join(os.path.dirname(ovf_file), vmdk_filename)
                 file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-                capacity = int(vmdk.get('size_gb', 10) * 1024 * 1024 * 1024)  # Convert GB to bytes
+                # Use actual VMDK file size instead of provisioned capacity
+                # This ensures the restored VM shows the real disk size, not the provisioned size
+                capacity = file_size
 
                 file_id = f"file{idx}"
                 disk_id = f"vmdisk{idx}"

@@ -476,8 +476,9 @@ class OVFExportLeaseService:
 
         # Add disk entries
         for i, filename, size_bytes in file_refs:
-            # Use a reasonable capacity (actual VMDK size * 2 for safety)
-            capacity = size_bytes * 2
+            # Use actual VMDK file size instead of provisioned capacity
+            # This ensures the restored VM shows the real disk size, not the provisioned size
+            capacity = size_bytes
             ovf_template += f'    <Disk ovf:capacity="{capacity}" ovf:capacityAllocationUnits="byte" ovf:diskId="vmdisk{i}" ovf:fileRef="file{i}" ovf:format="http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"/>\n'
 
         ovf_template += """  </DiskSection>
