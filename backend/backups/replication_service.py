@@ -2,6 +2,9 @@
 Service pour gérer la réplication de VMs et le failover entre serveurs ESXi
 """
 import logging
+import os
+import tempfile
+import shutil
 from datetime import datetime
 from django.utils import timezone
 from pyVim.connect import SmartConnect, Disconnect
@@ -11,6 +14,8 @@ import atexit
 
 from esxi.models import VirtualMachine, ESXiServer
 from backups.models import VMReplication, FailoverEvent
+from backups.ovf_export_service import OVFExportService
+from esxi.vmware_service import VMwareService
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +77,12 @@ class ReplicationService:
 
     def replicate_vm(self, replication):
         """
-        Effectuer une réplication de VM
+        Effectuer une réplication complète de VM
+
+        Processus :
+        1. Exporter la VM source en OVF (temporaire)
+        2. Déployer sur le serveur destination avec suffix "_replica"
+        3. La VM replica est prête pour le failover instantané
 
         Args:
             replication: Instance VMReplication
@@ -80,49 +90,88 @@ class ReplicationService:
         Returns:
             dict: Résultat de la réplication
         """
+        temp_dir = None
         try:
             start_time = timezone.now()
-            logger.info(f"Démarrage réplication: {replication.name}")
+            logger.info(f"[REPLICATION] Démarrage: {replication.name}")
 
-            # Obtenir le serveur source
             source_server = replication.get_source_server
             destination_server = replication.destination_server
-
-            # Se connecter aux serveurs
-            logger.info(f"Connexion au serveur source: {source_server.hostname}")
-            source_si = self._connect_to_server(source_server)
-
-            logger.info(f"Connexion au serveur destination: {destination_server.hostname}")
-            dest_si = self._connect_to_server(destination_server)
-
-            # Récupérer la VM source
             vm_name = replication.virtual_machine.name
-            source_vm = self._get_vm_by_name(source_si, vm_name)
+            replica_vm_name = f"{vm_name}_replica"
 
-            if not source_vm:
-                raise Exception(f"VM {vm_name} non trouvée sur le serveur source")
+            # Vérifier si la VM replica existe déjà
+            logger.info(f"[REPLICATION] Connexion au serveur destination: {destination_server.hostname}")
+            dest_si = self._connect_to_server(destination_server)
+            existing_replica = self._get_vm_by_name(dest_si, replica_vm_name)
 
-            # Créer un snapshot pour la réplication
-            logger.info(f"Création snapshot de réplication pour {vm_name}")
-            snapshot_task = source_vm.CreateSnapshot_Task(
-                name=f"Replication_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                description="Snapshot automatique pour réplication",
-                memory=False,
-                quiesce=True
+            if existing_replica:
+                logger.info(f"[REPLICATION] VM replica existe déjà: {replica_vm_name}")
+                logger.info(f"[REPLICATION] Suppression de l'ancienne replica pour mise à jour...")
+
+                # Arrêter la VM si elle tourne
+                if existing_replica.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
+                    power_off_task = existing_replica.PowerOffVM_Task()
+                    while power_off_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                        pass
+
+                # Supprimer la VM
+                destroy_task = existing_replica.Destroy_Task()
+                while destroy_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                    pass
+
+                logger.info(f"[REPLICATION] Ancienne replica supprimée")
+
+            # Créer un répertoire temporaire pour l'export OVF
+            temp_dir = tempfile.mkdtemp(prefix='replication_')
+            logger.info(f"[REPLICATION] Répertoire temporaire: {temp_dir}")
+
+            # Exporter la VM source en OVF
+            logger.info(f"[REPLICATION] Export de la VM source: {vm_name}")
+            ovf_service = OVFExportService()
+            export_result = ovf_service.export_vm_to_ovf(
+                esxi_server=source_server,
+                vm_name=vm_name,
+                export_path=temp_dir,
+                export_format='ovf'
             )
 
-            # Attendre la fin du snapshot
-            while snapshot_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
-                pass
+            if not export_result.get('success'):
+                raise Exception(f"Erreur export OVF: {export_result.get('error', 'Erreur inconnue')}")
 
-            if snapshot_task.info.state == vim.TaskInfo.State.error:
-                raise Exception(f"Erreur création snapshot: {snapshot_task.info.error}")
+            ovf_path = export_result['ovf_path']
+            logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
 
-            logger.info(f"Snapshot créé avec succès pour {vm_name}")
+            # Déployer sur le serveur destination avec le nom "_replica"
+            logger.info(f"[REPLICATION] Déploiement sur serveur destination: {destination_server.hostname}")
+            vmware_service = VMwareService(destination_server)
 
-            # TODO: Implémenter le transfert des données vers le serveur de destination
-            # Cela nécessite l'utilisation de vSphere Storage APIs ou autres méthodes
-            # Pour l'instant, nous marquons simplement la réplication comme réussie
+            # Récupérer le premier datastore disponible
+            datastores_info = vmware_service.get_datastores()
+            if not datastores_info or not datastores_info.get('datastores'):
+                raise Exception("Aucun datastore disponible sur le serveur destination")
+
+            dest_datastore = datastores_info['datastores'][0]['name']
+            logger.info(f"[REPLICATION] Datastore destination: {dest_datastore}")
+
+            # Déployer l'OVF
+            deploy_success = vmware_service.deploy_ovf(
+                ovf_path=ovf_path,
+                vm_name=replica_vm_name,
+                datastore_name=dest_datastore,
+                network_name='VM Network',
+                power_on=False  # Ne pas démarrer la replica automatiquement
+            )
+
+            if not deploy_success:
+                raise Exception("Échec du déploiement OVF sur le serveur destination")
+
+            logger.info(f"[REPLICATION] VM replica déployée: {replica_vm_name}")
+
+            # Nettoyer le répertoire temporaire
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                logger.info(f"[REPLICATION] Répertoire temporaire nettoyé")
 
             # Mettre à jour la réplication
             end_time = timezone.now()
@@ -133,20 +182,27 @@ class ReplicationService:
             replication.status = 'active'
             replication.save()
 
-            logger.info(f"Réplication terminée: {replication.name} ({duration}s)")
+            logger.info(f"[REPLICATION] Terminée: {replication.name} ({duration:.2f}s)")
 
             # Déconnexion
-            Disconnect(source_si)
             Disconnect(dest_si)
 
             return {
                 'success': True,
                 'duration_seconds': duration,
-                'message': f"Réplication de {vm_name} terminée avec succès"
+                'message': f"Réplication de {vm_name} terminée avec succès. VM replica: {replica_vm_name}"
             }
 
         except Exception as e:
-            logger.error(f"Erreur lors de la réplication {replication.name}: {e}")
+            logger.error(f"[REPLICATION] Erreur: {replication.name}: {e}")
+
+            # Nettoyer le répertoire temporaire en cas d'erreur
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
+
             replication.status = 'error'
             replication.save()
 
