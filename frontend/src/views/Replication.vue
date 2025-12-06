@@ -81,6 +81,39 @@
       </div>
     </div>
 
+    <!-- Progress Display -->
+    <div v-if="replicatingId" class="card bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <svg class="animate-spin h-6 w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <div>
+              <p class="text-base font-semibold text-blue-900">Réplication en cours...</p>
+              <p class="text-sm text-blue-700 mt-1">{{ replicationMessage }}</p>
+            </div>
+          </div>
+          <span class="text-3xl font-bold text-blue-600">{{ replicationProgress }}%</span>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="w-full bg-blue-200 rounded-full h-4 overflow-hidden shadow-inner">
+          <div
+            class="bg-gradient-to-r from-blue-500 to-indigo-600 h-4 rounded-full transition-all duration-300 ease-out shadow-lg"
+            :style="{ width: replicationProgress + '%' }"
+          ></div>
+        </div>
+
+        <!-- Progress Details -->
+        <div class="flex items-center justify-between text-sm text-blue-800">
+          <span class="font-medium">{{ replications.find(r => r.id === replicatingId)?.vm_name }}</span>
+          <span class="capitalize">{{ replicationStatus }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Replication List -->
     <div class="card">
       <h2 class="text-lg font-semibold text-gray-900 mb-4">Réplications Configurées</h2>
@@ -569,6 +602,12 @@ const selectedReplication = ref(null)
 const failoverReason = ref('')
 const failoverTestMode = ref(false)
 
+// Progress tracking
+const replicationProgress = ref(0)
+const replicationStatus = ref('')
+const replicationMessage = ref('')
+const currentReplicationId = ref(null)
+
 const form = ref({
   name: '',
   virtual_machine: '',
@@ -712,8 +751,13 @@ async function startReplication(replication) {
   if (!confirm(`Démarrer la réplication de ${replication.vm_name} ?`)) return
 
   replicatingId.value = replication.id
+  replicationProgress.value = 0
+  replicationStatus.value = 'starting'
+  replicationMessage.value = 'Démarrage de la réplication...'
+
   try {
     const response = await vmReplicationsAPI.startReplication(replication.id)
+    const replicationId = response.data.replication_id
 
     // Afficher message approprié selon le type de réponse
     if (response.data.warning) {
@@ -722,13 +766,60 @@ async function startReplication(replication) {
       toast.success(response.data.message || 'Réplication démarrée avec succès')
     }
 
+    // Si on a un replication_id, démarrer le polling de la progression
+    if (replicationId) {
+      currentReplicationId.value = replicationId
+
+      // Polling toutes les 500ms pour récupérer la progression
+      const pollInterval = setInterval(async () => {
+        try {
+          const progressResponse = await vmReplicationsAPI.getReplicationProgress(replicationId)
+          const progressData = progressResponse.data
+
+          replicationProgress.value = progressData.progress
+          replicationStatus.value = progressData.status
+          replicationMessage.value = progressData.message
+
+          // Arrêter le polling si terminé, en erreur ou annulé
+          if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
+            clearInterval(pollInterval)
+            replicatingId.value = null
+            currentReplicationId.value = null
+
+            if (progressData.status === 'completed') {
+              toast.success('Réplication terminée avec succès')
+              // Réinitialiser les valeurs de progression après 3 secondes
+              setTimeout(() => {
+                replicationProgress.value = 0
+                replicationStatus.value = ''
+                replicationMessage.value = ''
+              }, 3000)
+            } else if (progressData.status === 'cancelled') {
+              toast.info('Réplication annulée')
+            } else if (progressData.status === 'error') {
+              throw new Error(progressData.message)
+            }
+          }
+        } catch (pollErr) {
+          console.error('Erreur polling progression:', pollErr)
+          clearInterval(pollInterval)
+          replicatingId.value = null
+          currentReplicationId.value = null
+        }
+      }, 500)
+    } else {
+      replicatingId.value = null
+    }
+
     fetchData()
   } catch (error) {
     console.error('Erreur démarrage réplication:', error)
     const errorMsg = error.response?.data?.error || 'Erreur lors du démarrage de la réplication'
     toast.error(errorMsg)
-  } finally {
     replicatingId.value = null
+    replicationProgress.value = 0
+    replicationStatus.value = ''
+    replicationMessage.value = ''
   }
 }
 

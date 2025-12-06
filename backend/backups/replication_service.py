@@ -116,7 +116,7 @@ class ReplicationService:
         logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
         return ovf_path
 
-    def replicate_vm(self, replication):
+    def replicate_vm(self, replication, progress_callback=None):
         """
         Effectuer une réplication complète de VM
 
@@ -127,6 +127,7 @@ class ReplicationService:
 
         Args:
             replication: Instance VMReplication
+            progress_callback: Fonction callback pour la progression (optionnel)
 
         Returns:
             dict: Résultat de la réplication
@@ -136,19 +137,28 @@ class ReplicationService:
             start_time = timezone.now()
             logger.info(f"[REPLICATION] Démarrage: {replication.name}")
 
+            if progress_callback:
+                progress_callback(0, 'starting', 'Démarrage de la réplication...')
+
             source_server = replication.get_source_server
             destination_server = replication.destination_server
             vm_name = replication.virtual_machine.name
             replica_vm_name = f"{vm_name}_replica"
 
-            # Vérifier si la VM replica existe déjà
+            # Vérifier si la VM replica existe déjà (5%)
             logger.info(f"[REPLICATION] Connexion au serveur destination: {destination_server.hostname}")
+            if progress_callback:
+                progress_callback(5, 'connecting', f'Connexion au serveur destination {destination_server.hostname}...')
+
             dest_si = self._connect_to_server(destination_server)
             existing_replica = self._get_vm_by_name(dest_si, replica_vm_name)
 
             if existing_replica:
                 logger.info(f"[REPLICATION] VM replica existe déjà: {replica_vm_name}")
                 logger.info(f"[REPLICATION] Suppression de l'ancienne replica pour mise à jour...")
+
+                if progress_callback:
+                    progress_callback(10, 'cleaning', 'Suppression de l\'ancienne replica...')
 
                 # Arrêter la VM si elle tourne
                 if existing_replica.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
@@ -163,27 +173,45 @@ class ReplicationService:
 
                 logger.info(f"[REPLICATION] Ancienne replica supprimée")
 
-            # Créer un répertoire temporaire pour l'export OVF
+            # Créer un répertoire temporaire pour l'export OVF (15%)
             temp_dir = tempfile.mkdtemp(prefix='replication_')
             logger.info(f"[REPLICATION] Répertoire temporaire: {temp_dir}")
 
-            # Se connecter au serveur source pour l'export
+            if progress_callback:
+                progress_callback(15, 'preparing', 'Préparation de l\'export...')
+
+            # Se connecter au serveur source pour l'export (20%)
             logger.info(f"[REPLICATION] Connexion au serveur source: {source_server.hostname}")
+            if progress_callback:
+                progress_callback(20, 'connecting', f'Connexion au serveur source {source_server.hostname}...')
+
             source_si = self._connect_to_server(source_server)
 
-            # Exporter la VM source en OVF
+            # Exporter la VM source en OVF (25% → 60%)
             logger.info(f"[REPLICATION] Export de la VM source: {vm_name}")
+            if progress_callback:
+                progress_callback(25, 'exporting', f'Export de la VM {vm_name} en cours...')
+
             ovf_path = self._export_vm_to_ovf(source_si, vm_name, temp_dir)
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
+
+            if progress_callback:
+                progress_callback(60, 'exported', 'Export OVF terminé avec succès')
 
             # Déconnexion du serveur source
             Disconnect(source_si)
 
-            # Déployer sur le serveur destination avec le nom "_replica"
+            # Déployer sur le serveur destination avec le nom "_replica" (65%)
             logger.info(f"[REPLICATION] Déploiement sur serveur destination: {destination_server.hostname}")
+            if progress_callback:
+                progress_callback(65, 'deploying', f'Déploiement de la replica sur {destination_server.hostname}...')
+
             vmware_service = VMwareService(destination_server)
 
-            # Récupérer le premier datastore disponible
+            # Récupérer le premier datastore disponible (70%)
+            if progress_callback:
+                progress_callback(70, 'deploying', 'Recherche du datastore de destination...')
+
             datastores_info = vmware_service.get_datastores()
             if not datastores_info or not datastores_info.get('datastores'):
                 raise Exception("Aucun datastore disponible sur le serveur destination")
@@ -191,7 +219,10 @@ class ReplicationService:
             dest_datastore = datastores_info['datastores'][0]['name']
             logger.info(f"[REPLICATION] Datastore destination: {dest_datastore}")
 
-            # Déployer l'OVF
+            # Déployer l'OVF (75% → 90%)
+            if progress_callback:
+                progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
+
             deploy_success = vmware_service.deploy_ovf(
                 ovf_path=ovf_path,
                 vm_name=replica_vm_name,
@@ -205,7 +236,13 @@ class ReplicationService:
 
             logger.info(f"[REPLICATION] VM replica déployée: {replica_vm_name}")
 
-            # Nettoyer le répertoire temporaire
+            if progress_callback:
+                progress_callback(90, 'deployed', f'VM replica {replica_vm_name} déployée')
+
+            # Nettoyer le répertoire temporaire (95%)
+            if progress_callback:
+                progress_callback(95, 'cleaning', 'Nettoyage des fichiers temporaires...')
+
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
                 logger.info(f"[REPLICATION] Répertoire temporaire nettoyé")
@@ -221,6 +258,9 @@ class ReplicationService:
 
             logger.info(f"[REPLICATION] Terminée: {replication.name} ({duration:.2f}s)")
 
+            if progress_callback:
+                progress_callback(100, 'completed', f'Réplication terminée avec succès en {duration:.1f}s')
+
             # Déconnexion
             Disconnect(dest_si)
 
@@ -232,6 +272,9 @@ class ReplicationService:
 
         except Exception as e:
             logger.error(f"[REPLICATION] Erreur: {replication.name}: {e}")
+
+            if progress_callback:
+                progress_callback(-1, 'error', f'Erreur: {str(e)}')
 
             # Nettoyer le répertoire temporaire en cas d'erreur
             if temp_dir and os.path.exists(temp_dir):
