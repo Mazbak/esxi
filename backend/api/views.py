@@ -2684,8 +2684,11 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def start_replication(self, request, pk=None):
-        """Démarrer une réplication manuelle immédiate"""
+        """Démarrer une réplication manuelle immédiate avec progression"""
         from django.utils import timezone
+        from django.core.cache import cache
+        import uuid
+        import threading
 
         replication = self.get_object()
 
@@ -2696,50 +2699,70 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Tenter d'utiliser le service de réplication réel
-            from backups.replication_service import ReplicationService
-            service = ReplicationService()
-            result = service.replicate_vm(replication)
+            # Générer un ID unique pour cette réplication
+            replication_id = str(uuid.uuid4())
 
-            if result['success']:
-                return Response({
-                    'message': result['message'],
-                    'replication_id': replication.id,
-                    'duration_seconds': result.get('duration_seconds')
-                })
-            else:
-                return Response({
-                    'error': result['message'],
-                    'details': result.get('error')
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Fonction de callback pour la progression
+            def progress_callback(progress_percent, status_val, message):
+                progress_data = {
+                    'progress': int(progress_percent) if progress_percent >= 0 else 0,
+                    'status': status_val,
+                    'message': message
+                }
+                cache.set(f'replication_progress_{replication_id}', progress_data, timeout=3600)
 
-        except ImportError as e:
-            # pyVmomi n'est pas installé
+            # Fonction pour exécuter la réplication dans un thread
+            def run_replication():
+                from backups.replication_service import ReplicationService
+                service = ReplicationService()
+                service.replicate_vm(replication, progress_callback=progress_callback)
+
+            # Démarrer la réplication dans un thread séparé
+            thread = threading.Thread(target=run_replication, daemon=True)
+            thread.start()
+
+            # Retourner l'ID immédiatement
             return Response({
-                'error': 'Module pyVmomi non installé',
-                'details': str(e),
-                'solution': 'Installez pyVmomi: pip install pyvmomi'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'message': 'Réplication démarrée',
+                'replication_id': replication_id
+            })
 
         except Exception as e:
-            # Autres erreurs - fallback en mode simulation
             import traceback
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"Erreur lors de la réplication: {e}\n{traceback.format_exc()}")
-
-            # Mode simulation en cas d'erreur
-            replication.last_replication_at = timezone.now()
-            replication.status = 'active'
-            replication.save()
+            logger.error(f"Erreur lors du démarrage de la réplication: {e}\n{traceback.format_exc()}")
 
             return Response({
-                'warning': 'Réplication en mode simulation (erreur de connexion ESXi)',
-                'message': f'Réplication de {replication.virtual_machine.name} mise à jour',
-                'replication_id': replication.id,
-                'error_details': str(e),
-                'note': 'Vérifiez la connectivité et les credentials des serveurs ESXi'
-            }, status=status.HTTP_200_OK)
+                'error': str(e),
+                'details': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'], url_path='replication-progress/(?P<replication_id>[^/.]+)')
+    def replication_progress(self, request, replication_id=None):
+        """Récupérer la progression d'une réplication en cours"""
+        from django.core.cache import cache
+
+        try:
+            progress_data = cache.get(f'replication_progress_{replication_id}')
+
+            if progress_data is None:
+                return Response(
+                    {
+                        'progress': 0,
+                        'status': 'not_found',
+                        'message': 'Aucune réplication en cours avec cet ID'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            return Response(progress_data)
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
