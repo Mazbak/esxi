@@ -14,7 +14,7 @@ import atexit
 
 from esxi.models import VirtualMachine, ESXiServer
 from backups.models import VMReplication, FailoverEvent
-from backups.ovf_export_service import OVFExportService
+from backups.vm_backup_service import VMBackupService
 from esxi.vmware_service import VMwareService
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,47 @@ class ReplicationService:
         container.Destroy()
         return None
 
+    def _export_vm_to_ovf(self, si, vm_name, export_path):
+        """
+        Exporter une VM en format OVF en utilisant VMBackupService
+
+        Args:
+            si: ServiceInstance pyVmomi
+            vm_name: Nom de la VM à exporter
+            export_path: Chemin où exporter l'OVF
+
+        Returns:
+            str: Chemin vers le fichier OVF généré
+        """
+        # Récupérer l'objet VM
+        vm_obj = self._get_vm_by_name(si, vm_name)
+        if not vm_obj:
+            raise Exception(f"VM {vm_name} non trouvée")
+
+        # Créer le service de backup
+        backup_service = VMBackupService(
+            vm_obj=vm_obj,
+            vm_name=vm_name,
+            esxi_server=None,  # Pas utilisé pour l'export simple
+            backup_location=export_path,
+            backup_mode='full'
+        )
+
+        # Exporter les VMDKs
+        logger.info(f"[REPLICATION] Téléchargement des VMDKs...")
+        vmdk_files = backup_service.download_vmdk_files()
+
+        if not vmdk_files:
+            raise Exception("Aucun VMDK exporté")
+
+        # Créer le descripteur OVF
+        logger.info(f"[REPLICATION] Création du descripteur OVF...")
+        ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
+        backup_service.create_ovf_descriptor(vmdk_files, ovf_path)
+
+        logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
+        return ovf_path
+
     def replicate_vm(self, replication):
         """
         Effectuer une réplication complète de VM
@@ -126,21 +167,17 @@ class ReplicationService:
             temp_dir = tempfile.mkdtemp(prefix='replication_')
             logger.info(f"[REPLICATION] Répertoire temporaire: {temp_dir}")
 
+            # Se connecter au serveur source pour l'export
+            logger.info(f"[REPLICATION] Connexion au serveur source: {source_server.hostname}")
+            source_si = self._connect_to_server(source_server)
+
             # Exporter la VM source en OVF
             logger.info(f"[REPLICATION] Export de la VM source: {vm_name}")
-            ovf_service = OVFExportService()
-            export_result = ovf_service.export_vm_to_ovf(
-                esxi_server=source_server,
-                vm_name=vm_name,
-                export_path=temp_dir,
-                export_format='ovf'
-            )
-
-            if not export_result.get('success'):
-                raise Exception(f"Erreur export OVF: {export_result.get('error', 'Erreur inconnue')}")
-
-            ovf_path = export_result['ovf_path']
+            ovf_path = self._export_vm_to_ovf(source_si, vm_name, temp_dir)
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
+
+            # Déconnexion du serveur source
+            Disconnect(source_si)
 
             # Déployer sur le serveur destination avec le nom "_replica"
             logger.info(f"[REPLICATION] Déploiement sur serveur destination: {destination_server.hostname}")
