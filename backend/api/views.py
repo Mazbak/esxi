@@ -2694,6 +2694,18 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
 
         replication = self.get_object()
 
+        # CRITIQUE: Pré-charger TOUTES les ForeignKeys avant le thread
+        # pour éviter les requêtes DB dans le thread (pas thread-safe avec Django)
+        from backups.models import VMReplication
+        replication = VMReplication.objects.select_related(
+            'source_server',
+            'destination_server',
+            'virtual_machine',
+            'virtual_machine__server'
+        ).get(pk=replication.pk)
+
+        logger.info(f"[API] Réplication chargée avec relations: {replication.name}")
+
         if not replication.is_active:
             return Response(
                 {'error': 'La réplication est inactive'},
