@@ -2689,6 +2689,8 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
         from django.core.cache import cache
         import uuid
         import threading
+        import logging
+        logger = logging.getLogger(__name__)
 
         replication = self.get_object()
 
@@ -2724,8 +2726,6 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             # Fonction pour exécuter la réplication dans un thread
             def run_replication():
                 from backups.replication_service import ReplicationService
-                import logging
-                logger = logging.getLogger(__name__)
                 try:
                     logger.info(f"[API] Thread de réplication démarré pour {replication.name}")
                     service = ReplicationService()
@@ -2749,8 +2749,6 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             import traceback
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Erreur lors du démarrage de la réplication: {e}\n{traceback.format_exc()}")
 
             return Response({
