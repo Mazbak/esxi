@@ -273,6 +273,7 @@ export const vmReplicationsAPI = {
   delete: (id) => apiClient.delete(`/vm-replications/${id}/`),
   startReplication: (id) => apiClient.post(`/vm-replications/${id}/start_replication/`),
   getReplicationProgress: (replicationId) => apiClient.get(`/vm-replications/replication-progress/${replicationId}/`),
+  cancelReplication: (replicationId) => apiClient.post(`/vm-replications/cancel-replication/${replicationId}/`),
   performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/trigger_failover/`, data),
 }
 

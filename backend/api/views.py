@@ -2702,6 +2702,15 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             # Générer un ID unique pour cette réplication
             replication_id = str(uuid.uuid4())
 
+            # Initialiser le cache avec une progression de 0% AVANT de démarrer le thread
+            initial_progress = {
+                'progress': 0,
+                'status': 'starting',
+                'message': 'Démarrage de la réplication...'
+            }
+            cache.set(f'replication_progress_{replication_id}', initial_progress, timeout=3600)
+            logger.info(f"[API] Progression initialisée pour replication_id={replication_id}")
+
             # Fonction de callback pour la progression
             def progress_callback(progress_percent, status_val, message):
                 progress_data = {
@@ -2710,16 +2719,27 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                     'message': message
                 }
                 cache.set(f'replication_progress_{replication_id}', progress_data, timeout=3600)
+                logger.debug(f"[API] Progression mise à jour: {progress_data}")
 
             # Fonction pour exécuter la réplication dans un thread
             def run_replication():
                 from backups.replication_service import ReplicationService
-                service = ReplicationService()
-                service.replicate_vm(replication, progress_callback=progress_callback)
+                import logging
+                logger = logging.getLogger(__name__)
+                try:
+                    logger.info(f"[API] Thread de réplication démarré pour {replication.name}")
+                    service = ReplicationService()
+                    service.replicate_vm(replication, progress_callback=progress_callback)
+                    logger.info(f"[API] Thread de réplication terminé pour {replication.name}")
+                except Exception as e:
+                    logger.error(f"[API] Erreur dans le thread de réplication: {e}", exc_info=True)
+                    # Mettre à jour le cache avec l'erreur
+                    progress_callback(-1, 'error', str(e))
 
             # Démarrer la réplication dans un thread séparé
             thread = threading.Thread(target=run_replication, daemon=True)
             thread.start()
+            logger.info(f"[API] Thread lancé pour replication_id={replication_id}")
 
             # Retourner l'ID immédiatement
             return Response({
@@ -2763,7 +2783,41 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    @action(detail=False, methods=['post'], url_path='cancel-replication/(?P<replication_id>[^/.]+)')
+    def cancel_replication(self, request, replication_id=None):
+        """Arrêter une réplication en cours"""
+        from django.core.cache import cache
+
+        try:
+            # Mettre à jour le cache pour indiquer l'annulation
+            progress_data = cache.get(f'replication_progress_{replication_id}')
+
+            if progress_data is None:
+                return Response(
+                    {'error': 'Aucune réplication en cours avec cet ID'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Marquer comme annulée dans le cache
+            progress_data['status'] = 'cancelled'
+            progress_data['message'] = 'Réplication annulée par l\'utilisateur'
+            cache.set(f'replication_progress_{replication_id}', progress_data, timeout=3600)
+
+            # Note: Le thread continuera mais l'UI sera informée de l'annulation
+            logger.info(f"[API] Réplication {replication_id} marquée comme annulée")
+
+            return Response({
+                'message': 'Réplication annulée',
+                'replication_id': replication_id
+            })
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
         """Mettre en pause une réplication"""
