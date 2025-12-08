@@ -223,8 +223,17 @@ class ReplicationService:
                                 if file_size > 0:
                                     progress_pct = 25 + (35 * file_downloaded / file_size)
                                 else:
-                                    # Pas de taille connue, progression constante à 25% pendant le téléchargement
-                                    progress_pct = 25
+                                    # Pas de taille connue : estimer avec une progression logarithmique
+                                    # Cela donne une progression qui ralentit au fur et à mesure
+                                    # Par exemple: 100 MB = 30%, 500 MB = 45%, 1 GB = 52%, 5 GB = 58%
+                                    import math
+                                    downloaded_gb = downloaded / (1024 * 1024 * 1024)
+                                    # Progression logarithmique : 25 + 35 * log(1 + downloaded_gb) / log(11)
+                                    # À 10 GB, on atteindra ~60%
+                                    if downloaded_gb > 0:
+                                        progress_pct = 25 + (35 * math.log(1 + downloaded_gb) / math.log(11))
+                                    else:
+                                        progress_pct = 25
 
                             # Mettre à jour l'UI très fréquemment : tous les 0.5% OU tous les 10 chunks (~640KB)
                             # Cela garantit une progression fluide et visible même pour les petits fichiers
@@ -480,8 +489,16 @@ class ReplicationService:
             if progress_callback:
                 progress_callback(70, 'deploying', 'Recherche du datastore de destination...')
 
-            datastores_info = vmware_service.get_datastores()
+            logger.info(f"[REPLICATION] Appel de get_datastores() sur {destination_server.hostname}")
+            try:
+                datastores_info = vmware_service.get_datastores()
+                logger.info(f"[REPLICATION] Résultat get_datastores(): {datastores_info}")
+            except Exception as ds_err:
+                logger.error(f"[REPLICATION] Erreur lors de get_datastores(): {ds_err}", exc_info=True)
+                raise Exception(f"Impossible de récupérer les datastores: {ds_err}")
+
             if not datastores_info or not datastores_info.get('datastores'):
+                logger.error(f"[REPLICATION] datastores_info est vide ou None: {datastores_info}")
                 raise Exception("Aucun datastore disponible sur le serveur destination")
 
             dest_datastore = datastores_info['datastores'][0]['name']
