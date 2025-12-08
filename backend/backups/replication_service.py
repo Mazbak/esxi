@@ -125,6 +125,7 @@ class ReplicationService:
 
             logger.info(f"[REPLICATION] Taille totale à télécharger: {total_size / (1024*1024):.2f} MB")
 
+            file_index = 0
             for device_url in device_urls:
                 if not device_url.url.endswith('.vmdk'):
                     continue
@@ -146,6 +147,7 @@ class ReplicationService:
                 response.raise_for_status()
 
                 file_size = int(response.headers.get('content-length', 0))
+                file_downloaded = 0
 
                 with open(local_path, 'wb') as f:
                     chunk_size = 65536  # 64KB chunks pour meilleure performance
@@ -153,38 +155,55 @@ class ReplicationService:
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
+                            file_downloaded += len(chunk)
                             chunk_counter += 1
 
                             # Mettre à jour la progression du lease ET du callback
+                            # Calculer le pourcentage pour le lease (0-100)
                             if total_size > 0:
-                                # Calculer le pourcentage pour le lease (0-100)
                                 lease_progress = int((downloaded / total_size) * 100)
+                            else:
+                                # Si total_size = 0, utiliser la progression du fichier actuel
+                                lease_progress = int((file_downloaded / file_size) * 100) if file_size > 0 else 0
 
-                                # Mettre à jour le lease tous les 2% pour garder le lease actif
-                                if lease_progress >= last_lease_update + 2:
-                                    try:
-                                        lease.HttpNfcLeaseProgress(lease_progress)
-                                        last_lease_update = lease_progress
-                                        logger.debug(f"[REPLICATION] Lease progress: {lease_progress}%")
-                                    except:
-                                        pass  # Ignorer les erreurs de mise à jour du lease
+                            # Mettre à jour le lease tous les 2% pour garder le lease actif
+                            if lease_progress >= last_lease_update + 2:
+                                try:
+                                    lease.HttpNfcLeaseProgress(lease_progress)
+                                    last_lease_update = lease_progress
+                                    logger.debug(f"[REPLICATION] Lease progress: {lease_progress}%")
+                                except:
+                                    pass  # Ignorer les erreurs de mise à jour du lease
 
-                                # Calculer la progression UI (25-60%)
+                            # Calculer la progression UI (25-60%)
+                            if total_size > 0:
                                 progress_pct = 25 + (35 * downloaded / total_size)
+                            else:
+                                # Si total_size = 0, utiliser la progression du fichier actuel
+                                progress_pct = 25 + (35 * file_downloaded / file_size) if file_size > 0 else 25
 
-                                # Mettre à jour l'UI très fréquemment : tous les 0.5% OU tous les 10 chunks (~640KB)
-                                # Cela garantit une progression fluide et visible même pour les petits fichiers
-                                if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
-                                    if progress_callback:
-                                        downloaded_mb = downloaded / (1024 * 1024)
+                            # Mettre à jour l'UI très fréquemment : tous les 0.5% OU tous les 10 chunks (~640KB)
+                            # Cela garantit une progression fluide et visible même pour les petits fichiers
+                            if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
+                                if progress_callback:
+                                    downloaded_mb = downloaded / (1024 * 1024)
+                                    file_mb = file_downloaded / (1024 * 1024)
+                                    file_size_mb = file_size / (1024 * 1024)
+                                    if total_size > 0:
                                         total_mb = total_size / (1024 * 1024)
                                         progress_callback(
                                             progress_pct,
                                             'exporting',
                                             f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)'
                                         )
-                                        last_ui_update = progress_pct
-                                        chunk_counter = 0
+                                    else:
+                                        progress_callback(
+                                            progress_pct,
+                                            'exporting',
+                                            f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%)'
+                                        )
+                                    last_ui_update = progress_pct
+                                    chunk_counter = 0
 
                 vmdk_files.append({
                     'path': local_path,
@@ -192,6 +211,7 @@ class ReplicationService:
                     'size': file_size
                 })
                 logger.info(f"[REPLICATION] {filename} téléchargé: {file_size / (1024*1024):.2f} MB")
+                file_index += 1
 
             # Créer le descripteur OVF
             ovf_path = os.path.join(export_path, f"{vm_name}.ovf")
