@@ -2690,9 +2690,15 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
         import uuid
         import threading
         import logging
+        import sys
         logger = logging.getLogger(__name__)
 
+        print("=" * 80, file=sys.stderr)
+        print("[DEBUG] start_replication appelée", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+
         replication = self.get_object()
+        print(f"[DEBUG] Réplication récupérée: {replication.id}", file=sys.stderr)
 
         # CRITIQUE: Pré-charger TOUTES les ForeignKeys avant le thread
         # pour éviter les requêtes DB dans le thread (pas thread-safe avec Django)
@@ -2704,9 +2710,11 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             'virtual_machine__server'
         ).get(pk=replication.pk)
 
+        print(f"[DEBUG] Relations pré-chargées: {replication.name}", file=sys.stderr)
         logger.info(f"[API] Réplication chargée avec relations: {replication.name}")
 
         if not replication.is_active:
+            print(f"[DEBUG] Réplication inactive, retour erreur", file=sys.stderr)
             return Response(
                 {'error': 'La réplication est inactive'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -2715,6 +2723,7 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
         try:
             # Générer un ID unique pour cette réplication
             replication_id = str(uuid.uuid4())
+            print(f"[DEBUG] ID réplication généré: {replication_id}", file=sys.stderr)
 
             # Initialiser le cache avec une progression de 0% AVANT de démarrer le thread
             initial_progress = {
@@ -2723,34 +2732,53 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 'message': 'Démarrage de la réplication...'
             }
             cache.set(f'replication_progress_{replication_id}', initial_progress, timeout=3600)
+            print(f"[DEBUG] Cache initialisé à 0%", file=sys.stderr)
+
+            # Vérifier que le cache a bien été écrit
+            test_cache = cache.get(f'replication_progress_{replication_id}')
+            print(f"[DEBUG] Vérification cache: {test_cache}", file=sys.stderr)
+
             logger.info(f"[API] Progression initialisée pour replication_id={replication_id}")
 
             # Fonction de callback pour la progression
             def progress_callback(progress_percent, status_val, message):
+                print(f"[DEBUG CALLBACK] {progress_percent}% - {status_val} - {message}", file=sys.stderr)
                 progress_data = {
                     'progress': int(progress_percent) if progress_percent >= 0 else 0,
                     'status': status_val,
                     'message': message
                 }
                 cache.set(f'replication_progress_{replication_id}', progress_data, timeout=3600)
-                logger.debug(f"[API] Progression mise à jour: {progress_data}")
+                logger.info(f"[API] Progression mise à jour: {progress_data}")
 
             # Fonction pour exécuter la réplication dans un thread
             def run_replication():
+                print("=" * 80, file=sys.stderr)
+                print("[DEBUG THREAD] Thread de réplication DÉMARRÉ", file=sys.stderr)
+                print("=" * 80, file=sys.stderr)
                 from backups.replication_service import ReplicationService
                 try:
                     logger.info(f"[API] Thread de réplication démarré pour {replication.name}")
+                    print(f"[DEBUG THREAD] Création ReplicationService", file=sys.stderr)
                     service = ReplicationService()
+                    print(f"[DEBUG THREAD] Appel replicate_vm", file=sys.stderr)
                     service.replicate_vm(replication, progress_callback=progress_callback)
+                    print(f"[DEBUG THREAD] replicate_vm terminé", file=sys.stderr)
                     logger.info(f"[API] Thread de réplication terminé pour {replication.name}")
                 except Exception as e:
+                    import traceback
+                    print(f"[DEBUG THREAD] ERREUR: {e}", file=sys.stderr)
+                    print(traceback.format_exc(), file=sys.stderr)
                     logger.error(f"[API] Erreur dans le thread de réplication: {e}", exc_info=True)
                     # Mettre à jour le cache avec l'erreur
                     progress_callback(-1, 'error', str(e))
 
             # Démarrer la réplication dans un thread séparé
+            print(f"[DEBUG] Création thread...", file=sys.stderr)
             thread = threading.Thread(target=run_replication, daemon=True)
+            print(f"[DEBUG] Démarrage thread...", file=sys.stderr)
             thread.start()
+            print(f"[DEBUG] Thread démarré! Actif: {thread.is_alive()}", file=sys.stderr)
             logger.info(f"[API] Thread lancé pour replication_id={replication_id}")
 
             # Retourner l'ID immédiatement
@@ -2761,6 +2789,8 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             import traceback
+            print(f"[DEBUG] EXCEPTION DANS start_replication: {e}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
             logger.error(f"Erreur lors du démarrage de la réplication: {e}\n{traceback.format_exc()}")
 
             return Response({
