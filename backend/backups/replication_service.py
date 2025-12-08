@@ -117,13 +117,38 @@ class ReplicationService:
             # Télécharger les fichiers VMDK
             vmdk_files = []
             device_urls = lease.info.deviceUrl
+
+            # Calculer total_size depuis l'API si disponible
             total_size = sum(d.targetSize for d in device_urls if hasattr(d, 'targetSize'))
+
+            # Si total_size = 0 (métadonnées incomplètes), faire une passe pour récupérer les tailles réelles
+            if total_size == 0:
+                logger.info(f"[REPLICATION] targetSize non disponible, récupération tailles réelles via HTTP HEAD...")
+                for device_url in device_urls:
+                    if not device_url.url.endswith('.vmdk'):
+                        continue
+                    url = device_url.url.replace('*', esxi_host)
+                    try:
+                        # HEAD request pour obtenir Content-Length sans télécharger
+                        head_response = requests.head(
+                            url,
+                            auth=(esxi_user, esxi_pass),
+                            verify=False,
+                            timeout=10
+                        )
+                        file_size = int(head_response.headers.get('content-length', 0))
+                        total_size += file_size
+                    except Exception as e:
+                        logger.warning(f"[REPLICATION] Impossible de récupérer la taille de {url}: {e}")
+
+                logger.info(f"[REPLICATION] Taille totale calculée depuis HTTP: {total_size / (1024*1024):.2f} MB")
+            else:
+                logger.info(f"[REPLICATION] Taille totale depuis API: {total_size / (1024*1024):.2f} MB")
+
             downloaded = 0
             last_lease_update = 0  # Dernier pourcentage où on a mis à jour le lease
             last_ui_update = 0  # Dernier pourcentage où on a mis à jour l'UI
             chunk_counter = 0  # Compteur de chunks
-
-            logger.info(f"[REPLICATION] Taille totale à télécharger: {total_size / (1024*1024):.2f} MB")
 
             file_index = 0
             for device_url in device_urls:
