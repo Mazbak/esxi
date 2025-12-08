@@ -489,8 +489,16 @@ class ReplicationService:
             if progress_callback:
                 progress_callback(70, 'deploying', 'Recherche du datastore de destination...')
 
-            datastores_info = vmware_service.get_datastores()
+            logger.info(f"[REPLICATION] Appel de get_datastores() sur {destination_server.hostname}")
+            try:
+                datastores_info = vmware_service.get_datastores()
+                logger.info(f"[REPLICATION] Résultat get_datastores(): {datastores_info}")
+            except Exception as ds_err:
+                logger.error(f"[REPLICATION] Erreur lors de get_datastores(): {ds_err}", exc_info=True)
+                raise Exception(f"Impossible de récupérer les datastores: {ds_err}")
+
             if not datastores_info or not datastores_info.get('datastores'):
+                logger.error(f"[REPLICATION] datastores_info est vide ou None: {datastores_info}")
                 raise Exception("Aucun datastore disponible sur le serveur destination")
 
             dest_datastore = datastores_info['datastores'][0]['name']
