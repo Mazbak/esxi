@@ -2761,8 +2761,8 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                     logger.info(f"[API] Thread de réplication démarré pour {replication.name}")
                     print(f"[DEBUG THREAD] Création ReplicationService", file=sys.stderr)
                     service = ReplicationService()
-                    print(f"[DEBUG THREAD] Appel replicate_vm", file=sys.stderr)
-                    service.replicate_vm(replication, progress_callback=progress_callback)
+                    print(f"[DEBUG THREAD] Appel replicate_vm avec replication_id={replication_id}", file=sys.stderr)
+                    service.replicate_vm(replication, progress_callback=progress_callback, replication_id=replication_id)
                     print(f"[DEBUG THREAD] replicate_vm terminé", file=sys.stderr)
                     logger.info(f"[API] Thread de réplication terminé pour {replication.name}")
                 except Exception as e:
