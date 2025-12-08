@@ -80,7 +80,7 @@ class ReplicationService:
         container.Destroy()
         return None
 
-    def _export_vm_to_ovf(self, si, vm_name, export_path, esxi_host, esxi_user, esxi_pass, progress_callback=None):
+    def _export_vm_to_ovf(self, si, vm_name, export_path, esxi_host, esxi_user, esxi_pass, progress_callback=None, replication_id=None):
         """
         Exporter une VM en format OVF en utilisant HttpNfcLease API
         Version simplifiée sans dépendances sur les modèles Django
@@ -93,6 +93,7 @@ class ReplicationService:
             esxi_user: Username ESXi
             esxi_pass: Password ESXi
             progress_callback: Callback optionnel pour progression
+            replication_id: ID de réplication pour vérifier l'annulation
 
         Returns:
             str: Chemin vers le fichier OVF généré
@@ -174,10 +175,23 @@ class ReplicationService:
                 file_size = int(response.headers.get('content-length', 0))
                 file_downloaded = 0
 
+                # Si file_size = 0, utiliser une estimation basée sur la taille du disque
+                if file_size == 0 and hasattr(device_url, 'targetSize') and device_url.targetSize > 0:
+                    file_size = device_url.targetSize
+                    logger.info(f"[REPLICATION] Utilisation targetSize comme estimation: {file_size / (1024*1024):.2f} MB")
+
                 with open(local_path, 'wb') as f:
                     chunk_size = 65536  # 64KB chunks pour meilleure performance
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
+                            # VÉRIFIER L'ANNULATION AVANT CHAQUE CHUNK
+                            if replication_id:
+                                from django.core.cache import cache
+                                progress_data = cache.get(f'replication_progress_{replication_id}')
+                                if progress_data and progress_data.get('status') == 'cancelled':
+                                    logger.info(f"[REPLICATION] Annulation détectée, arrêt du téléchargement")
+                                    raise Exception("Réplication annulée par l'utilisateur")
+
                             f.write(chunk)
                             downloaded += len(chunk)
                             file_downloaded += len(chunk)
@@ -204,8 +218,13 @@ class ReplicationService:
                             if total_size > 0:
                                 progress_pct = 25 + (35 * downloaded / total_size)
                             else:
-                                # Si total_size = 0, utiliser la progression du fichier actuel
-                                progress_pct = 25 + (35 * file_downloaded / file_size) if file_size > 0 else 25
+                                # Si total_size = 0, estimer la progression sur 35% de 25 à 60
+                                # Utiliser une progression linéaire basée sur les données téléchargées
+                                if file_size > 0:
+                                    progress_pct = 25 + (35 * file_downloaded / file_size)
+                                else:
+                                    # Pas de taille connue, progression constante à 25% pendant le téléchargement
+                                    progress_pct = 25
 
                             # Mettre à jour l'UI très fréquemment : tous les 0.5% OU tous les 10 chunks (~640KB)
                             # Cela garantit une progression fluide et visible même pour les petits fichiers
@@ -221,11 +240,18 @@ class ReplicationService:
                                             'exporting',
                                             f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)'
                                         )
-                                    else:
+                                    elif file_size > 0:
                                         progress_callback(
                                             progress_pct,
                                             'exporting',
                                             f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%)'
+                                        )
+                                    else:
+                                        # Taille inconnue, afficher seulement les MB téléchargés
+                                        progress_callback(
+                                            progress_pct,
+                                            'exporting',
+                                            f'Export {filename}: {file_mb:.1f} MB téléchargés...'
                                         )
                                     last_ui_update = progress_pct
                                     chunk_counter = 0
@@ -305,7 +331,7 @@ class ReplicationService:
 
         logger.info(f"[REPLICATION] Descripteur OVF créé: {ovf_path}")
 
-    def replicate_vm(self, replication, progress_callback=None):
+    def replicate_vm(self, replication, progress_callback=None, replication_id=None):
         """
         Effectuer une réplication complète de VM
 
@@ -317,6 +343,7 @@ class ReplicationService:
         Args:
             replication: Instance VMReplication
             progress_callback: Fonction callback pour la progression (optionnel)
+            replication_id: ID de réplication pour vérifier l'annulation (optionnel)
 
         Returns:
             dict: Résultat de la réplication
@@ -426,7 +453,8 @@ class ReplicationService:
                 source_server.hostname,
                 source_server.username,
                 source_server.password,
-                progress_callback
+                progress_callback,
+                replication_id
             )
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
 
