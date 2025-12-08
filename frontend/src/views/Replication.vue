@@ -95,7 +95,18 @@
               <p class="text-sm text-blue-700 mt-1">{{ replicationMessage }}</p>
             </div>
           </div>
-          <span class="text-3xl font-bold text-blue-600">{{ replicationProgress }}%</span>
+          <div class="flex items-center gap-4">
+            <span class="text-3xl font-bold text-blue-600">{{ replicationProgress }}%</span>
+            <button
+              @click="cancelReplication"
+              class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Arrêter
+            </button>
+          </div>
         </div>
 
         <!-- Progress Bar -->
@@ -747,6 +758,8 @@ function closeModal() {
   }
 }
 
+let pollInterval = null // Stocker l'intervalle de polling
+
 async function startReplication(replication) {
   if (!confirm(`Démarrer la réplication de ${replication.vm_name} ?`)) return
 
@@ -771,7 +784,7 @@ async function startReplication(replication) {
       currentReplicationId.value = replicationId
 
       // Polling toutes les 500ms pour récupérer la progression
-      const pollInterval = setInterval(async () => {
+      pollInterval = setInterval(async () => {
         try {
           const progressResponse = await vmReplicationsAPI.getReplicationProgress(replicationId)
           const progressData = progressResponse.data
@@ -783,6 +796,7 @@ async function startReplication(replication) {
           // Arrêter le polling si terminé, en erreur ou annulé
           if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
             clearInterval(pollInterval)
+            pollInterval = null
             replicatingId.value = null
             currentReplicationId.value = null
 
@@ -796,13 +810,22 @@ async function startReplication(replication) {
               }, 3000)
             } else if (progressData.status === 'cancelled') {
               toast.info('Réplication annulée')
+              replicationProgress.value = 0
+              replicationStatus.value = ''
+              replicationMessage.value = ''
             } else if (progressData.status === 'error') {
-              throw new Error(progressData.message)
+              toast.error(progressData.message || 'Erreur lors de la réplication')
+              replicationProgress.value = 0
+              replicationStatus.value = ''
+              replicationMessage.value = ''
             }
           }
         } catch (pollErr) {
           console.error('Erreur polling progression:', pollErr)
-          clearInterval(pollInterval)
+          if (pollInterval) {
+            clearInterval(pollInterval)
+            pollInterval = null
+          }
           replicatingId.value = null
           currentReplicationId.value = null
         }
@@ -820,6 +843,36 @@ async function startReplication(replication) {
     replicationProgress.value = 0
     replicationStatus.value = ''
     replicationMessage.value = ''
+  }
+}
+
+async function cancelReplication() {
+  if (!currentReplicationId.value) {
+    toast.error('Aucune réplication en cours')
+    return
+  }
+
+  if (!confirm('Êtes-vous sûr de vouloir arrêter cette réplication ?')) return
+
+  try {
+    await vmReplicationsAPI.cancelReplication(currentReplicationId.value)
+    toast.info('Demande d\'arrêt envoyée...')
+
+    // Arrêter le polling
+    if (pollInterval) {
+      clearInterval(pollInterval)
+      pollInterval = null
+    }
+
+    // Réinitialiser l'UI
+    replicatingId.value = null
+    currentReplicationId.value = null
+    replicationProgress.value = 0
+    replicationStatus.value = ''
+    replicationMessage.value = ''
+  } catch (error) {
+    console.error('Erreur arrêt réplication:', error)
+    toast.error('Erreur lors de l\'arrêt de la réplication')
   }
 }
 
