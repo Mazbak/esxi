@@ -86,11 +86,14 @@ class ReplicationService:
         """
         Télécharge un fichier VMDK avec système de retry automatique en cas d'erreur réseau
         Supporte la reprise du téléchargement avec HTTP Range headers
+        Utilise un thread de keepalive pour maintenir le lease ESXi actif
 
         Returns:
             tuple: (bytes_downloaded, last_lease_update, last_ui_update, chunk_counter, file_size)
         """
         import logging
+        import threading
+        import time
         logger = logging.getLogger(__name__)
 
         filename = os.path.basename(device_url.targetId)
@@ -100,133 +103,178 @@ class ReplicationService:
         file_downloaded = 0
         file_size = 0
 
-        while retry_count <= max_retries and not download_complete:
-            try:
-                # Vérifier si un téléchargement partiel existe (pour reprise)
-                if os.path.exists(local_path) and os.path.getsize(local_path) > 0 and retry_count > 0:
-                    # Reprise du téléchargement
-                    bytes_already_downloaded = os.path.getsize(local_path)
-                    file_downloaded = bytes_already_downloaded
-                    logger.info(f"[REPLICATION] 🔄 Reprise à {bytes_already_downloaded / (1024*1024):.1f} MB (tentative {retry_count + 1}/{max_retries + 1})")
+        # Thread de keepalive pour maintenir le lease actif
+        keepalive_stop = threading.Event()
+        keepalive_last_progress = [0]  # Liste pour pouvoir modifier dans le thread
 
-                    response = requests.get(
-                        url,
-                        auth=(esxi_user, esxi_pass),
-                        verify=False,
-                        stream=True,
-                        headers={'Range': f'bytes={bytes_already_downloaded}-'},
-                        timeout=(10, 300)
-                    )
-                    response.raise_for_status()
+        def lease_keepalive_thread():
+            """Thread qui met à jour le lease toutes les 30 secondes pour éviter l'expiration"""
+            logger.info(f"[KEEPALIVE] Thread de keepalive du lease démarré")
+            while not keepalive_stop.is_set():
+                try:
+                    # Attendre 30 secondes (ou jusqu'à ce qu'on demande l'arrêt)
+                    if keepalive_stop.wait(timeout=30):
+                        break  # Stop demandé
 
-                    file_mode = 'ab'  # Append mode
-                    file_size_from_header = int(response.headers.get('content-length', 0))
-                    if file_size_from_header > 0:
-                        file_size = bytes_already_downloaded + file_size_from_header
-                else:
-                    # Nouveau téléchargement
-                    bytes_already_downloaded = 0
-                    if retry_count > 0:
-                        logger.info(f"[REPLICATION] 🔄 Nouvelle tentative {retry_count + 1}/{max_retries + 1}")
+                    # Mettre à jour le lease avec la dernière progression connue
+                    current_progress = keepalive_last_progress[0]
+                    lease.HttpNfcLeaseProgress(current_progress)
+                    logger.debug(f"[KEEPALIVE] Lease mis à jour: {current_progress}%")
 
-                    response = requests.get(
-                        url,
-                        auth=(esxi_user, esxi_pass),
-                        verify=False,
-                        stream=True,
-                        timeout=(10, 300)
-                    )
-                    response.raise_for_status()
+                except Exception as e:
+                    logger.warning(f"[KEEPALIVE] Erreur lors de la mise à jour du lease: {e}")
 
-                    file_mode = 'wb'  # Write mode
-                    file_size = int(response.headers.get('content-length', 0))
-                    file_downloaded = 0
+            logger.info(f"[KEEPALIVE] Thread de keepalive arrêté")
 
-                # Si file_size = 0, utiliser estimation basée sur targetSize
-                if file_size == 0 and hasattr(device_url, 'targetSize') and device_url.targetSize > 0:
-                    file_size = device_url.targetSize
-                    logger.info(f"[REPLICATION] Utilisation targetSize: {file_size / (1024*1024):.2f} MB")
+        # Démarrer le thread de keepalive
+        keepalive_thread = threading.Thread(target=lease_keepalive_thread, daemon=True)
+        keepalive_thread.start()
 
-                with open(local_path, file_mode) as f:
-                    chunk_size = 65536  # 64KB chunks
-                    for chunk in response.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            # Vérifier annulation
-                            if replication_id:
-                                from django.core.cache import cache
-                                progress_data = cache.get(f'replication_progress_{replication_id}')
-                                if progress_data and progress_data.get('status') == 'cancelled':
-                                    logger.info(f"[REPLICATION] Annulation détectée")
-                                    raise Exception("Réplication annulée par l'utilisateur")
+        try:
+            while retry_count <= max_retries and not download_complete:
+                download_start_time = time.time()
+                last_chunk_time = time.time()
 
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            file_downloaded += len(chunk)
-                            chunk_counter += 1
+                try:
+                    # Vérifier si un téléchargement partiel existe (pour reprise)
+                    if os.path.exists(local_path) and os.path.getsize(local_path) > 0 and retry_count > 0:
+                        # Reprise du téléchargement
+                        bytes_already_downloaded = os.path.getsize(local_path)
+                        file_downloaded = bytes_already_downloaded
+                        logger.info(f"[REPLICATION] 🔄 Reprise à {bytes_already_downloaded / (1024*1024):.1f} MB (tentative {retry_count + 1}/{max_retries + 1})")
 
-                            # Mise à jour du lease
-                            if total_size > 0:
-                                lease_progress = int((downloaded / total_size) * 100)
-                            else:
-                                lease_progress = int((file_downloaded / file_size) * 100) if file_size > 0 else 0
+                        response = requests.get(
+                            url,
+                            auth=(esxi_user, esxi_pass),
+                            verify=False,
+                            stream=True,
+                            headers={'Range': f'bytes={bytes_already_downloaded}-'},
+                            timeout=(10, 120)  # 10s connexion, 120s lecture (réduit de 300s)
+                        )
+                        response.raise_for_status()
 
-                            if lease_progress >= last_lease_update + 2:
-                                try:
-                                    lease.HttpNfcLeaseProgress(lease_progress)
-                                    last_lease_update = lease_progress
-                                except:
-                                    pass
+                        file_mode = 'ab'  # Append mode
+                        file_size_from_header = int(response.headers.get('content-length', 0))
+                        if file_size_from_header > 0:
+                            file_size = bytes_already_downloaded + file_size_from_header
+                    else:
+                        # Nouveau téléchargement
+                        bytes_already_downloaded = 0
+                        if retry_count > 0:
+                            logger.info(f"[REPLICATION] 🔄 Nouvelle tentative {retry_count + 1}/{max_retries + 1}")
 
-                            # Calcul progression UI (25-60%)
-                            if total_size > 0:
-                                progress_pct = 25 + (35 * downloaded / total_size)
-                            else:
-                                if file_size > 0:
-                                    progress_pct = 25 + (35 * file_downloaded / file_size)
+                        response = requests.get(
+                            url,
+                            auth=(esxi_user, esxi_pass),
+                            verify=False,
+                            stream=True,
+                            timeout=(10, 120)  # 10s connexion, 120s lecture
+                        )
+                        response.raise_for_status()
+
+                        file_mode = 'wb'  # Write mode
+                        file_size = int(response.headers.get('content-length', 0))
+                        file_downloaded = 0
+
+                    # Si file_size = 0, utiliser estimation basée sur targetSize
+                    if file_size == 0 and hasattr(device_url, 'targetSize') and device_url.targetSize > 0:
+                        file_size = device_url.targetSize
+                        logger.info(f"[REPLICATION] Utilisation targetSize: {file_size / (1024*1024):.2f} MB")
+
+                    with open(local_path, file_mode) as f:
+                        chunk_size = 32768  # 32KB chunks (réduit de 64KB pour plus de callbacks)
+                        chunks_received = 0
+
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                # Vérifier annulation
+                                if replication_id:
+                                    from django.core.cache import cache
+                                    progress_data = cache.get(f'replication_progress_{replication_id}')
+                                    if progress_data and progress_data.get('status') == 'cancelled':
+                                        logger.info(f"[REPLICATION] Annulation détectée")
+                                        raise Exception("Réplication annulée par l'utilisateur")
+
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                file_downloaded += len(chunk)
+                                chunk_counter += 1
+                                chunks_received += 1
+
+                                # Logger le temps entre chunks toutes les 100 chunks (~3.2 MB)
+                                current_time = time.time()
+                                if chunks_received % 100 == 0:
+                                    time_since_last = current_time - last_chunk_time
+                                    speed_mbps = (100 * chunk_size / 1024 / 1024) / time_since_last if time_since_last > 0 else 0
+                                    logger.debug(f"[REPLICATION] 100 chunks reçus en {time_since_last:.2f}s ({speed_mbps:.2f} MB/s)")
+                                    last_chunk_time = current_time
+
+                                # Mise à jour du lease (pour les logs et le keepalive thread)
+                                if total_size > 0:
+                                    lease_progress = int((downloaded / total_size) * 100)
                                 else:
-                                    import math
-                                    downloaded_mb = downloaded / (1024 * 1024)
-                                    if downloaded_mb < 100:
-                                        progress_pct = 25 + (downloaded_mb * 0.05)
-                                    elif downloaded_mb < 1000:
-                                        progress_pct = 30 + (20 * math.log(downloaded_mb / 100) / math.log(10))
+                                    lease_progress = int((file_downloaded / file_size) * 100) if file_size > 0 else 0
+
+                                # Mettre à jour la progression pour le keepalive thread
+                                keepalive_last_progress[0] = lease_progress
+
+                                # Calcul progression UI (25-60%)
+                                if total_size > 0:
+                                    progress_pct = 25 + (35 * downloaded / total_size)
+                                else:
+                                    if file_size > 0:
+                                        progress_pct = 25 + (35 * file_downloaded / file_size)
                                     else:
-                                        progress_pct = min(50 + (10 * math.log(downloaded_mb / 1000) / math.log(10)), 60)
+                                        import math
+                                        downloaded_mb = downloaded / (1024 * 1024)
+                                        if downloaded_mb < 100:
+                                            progress_pct = 25 + (downloaded_mb * 0.05)
+                                        elif downloaded_mb < 1000:
+                                            progress_pct = 30 + (20 * math.log(downloaded_mb / 100) / math.log(10))
+                                        else:
+                                            progress_pct = min(50 + (10 * math.log(downloaded_mb / 1000) / math.log(10)), 60)
 
-                            # Callback UI
-                            if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
-                                if progress_callback:
-                                    downloaded_mb = downloaded / (1024 * 1024)
-                                    file_mb = file_downloaded / (1024 * 1024)
-                                    file_size_mb = file_size / (1024 * 1024)
-                                    if total_size > 0:
-                                        total_mb = total_size / (1024 * 1024)
-                                        progress_callback(progress_pct, 'exporting',
-                                            f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)')
-                                    elif file_size > 0:
-                                        progress_callback(progress_pct, 'exporting',
-                                            f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%)')
-                                    else:
-                                        progress_callback(progress_pct, 'exporting',
-                                            f'Export {filename}: {file_mb:.1f} MB téléchargés...')
-                                    last_ui_update = progress_pct
-                                    chunk_counter = 0
+                                # Callback UI
+                                if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
+                                    if progress_callback:
+                                        downloaded_mb = downloaded / (1024 * 1024)
+                                        file_mb = file_downloaded / (1024 * 1024)
+                                        file_size_mb = file_size / (1024 * 1024)
+                                        if total_size > 0:
+                                            total_mb = total_size / (1024 * 1024)
+                                            progress_callback(progress_pct, 'exporting',
+                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)')
+                                        elif file_size > 0:
+                                            progress_callback(progress_pct, 'exporting',
+                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%)')
+                                        else:
+                                            progress_callback(progress_pct, 'exporting',
+                                                f'Export {filename}: {file_mb:.1f} MB téléchargés...')
+                                        last_ui_update = progress_pct
+                                        chunk_counter = 0
 
-                # Téléchargement réussi!
-                download_complete = True
-                logger.info(f"[REPLICATION] ✅ {filename} téléchargé ({file_downloaded / (1024*1024):.1f} MB)")
+                    # Téléchargement réussi!
+                    download_complete = True
+                    total_time = time.time() - download_start_time
+                    avg_speed = (file_downloaded / 1024 / 1024) / total_time if total_time > 0 else 0
+                    logger.info(f"[REPLICATION] ✅ {filename} téléchargé ({file_downloaded / (1024*1024):.1f} MB en {total_time:.1f}s, {avg_speed:.2f} MB/s)")
 
-            except (requests.exceptions.ChunkedEncodingError,
-                    requests.exceptions.ConnectionError,
-                    ConnectionResetError) as e:
-                retry_count += 1
-                if retry_count > max_retries:
-                    logger.error(f"[REPLICATION] ❌ Échec après {max_retries + 1} tentatives: {e}")
-                    raise Exception(f"Téléchargement échoué après {max_retries + 1} tentatives: {e}")
+                except (requests.exceptions.ChunkedEncodingError,
+                        requests.exceptions.ConnectionError,
+                        requests.exceptions.Timeout,
+                        ConnectionResetError) as e:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        logger.error(f"[REPLICATION] ❌ Échec après {max_retries + 1} tentatives: {e}")
+                        raise Exception(f"Téléchargement échoué après {max_retries + 1} tentatives: {e}")
 
-                logger.warning(f"[REPLICATION] ⚠️  Erreur ({e}), reprise dans 3s...")
-                import time
-                time.sleep(3)
+                    logger.warning(f"[REPLICATION] ⚠️  Erreur ({e}), reprise dans 3s...")
+                    time.sleep(3)
+
+        finally:
+            # IMPORTANT: Arrêter le thread de keepalive
+            keepalive_stop.set()
+            keepalive_thread.join(timeout=5)  # Attendre max 5 secondes
 
         return (downloaded, last_lease_update, last_ui_update, chunk_counter, file_size)
 
