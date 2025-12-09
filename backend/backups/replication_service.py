@@ -141,7 +141,7 @@ class ReplicationService:
                         # Reprise du téléchargement
                         bytes_already_downloaded = os.path.getsize(local_path)
                         file_downloaded = bytes_already_downloaded
-                        logger.info(f"[REPLICATION] 🔄 Reprise à {bytes_already_downloaded / (1024*1024):.1f} MB (tentative {retry_count + 1}/{max_retries + 1})")
+                        logger.info(f"[REPLICATION] [RETRY] Reprise à {bytes_already_downloaded / (1024*1024):.1f} MB (tentative {retry_count + 1}/{max_retries + 1})")
 
                         response = requests.get(
                             url,
@@ -161,7 +161,7 @@ class ReplicationService:
                         # Nouveau téléchargement
                         bytes_already_downloaded = 0
                         if retry_count > 0:
-                            logger.info(f"[REPLICATION] 🔄 Nouvelle tentative {retry_count + 1}/{max_retries + 1}")
+                            logger.info(f"[REPLICATION] [RETRY] Nouvelle tentative {retry_count + 1}/{max_retries + 1}")
 
                         response = requests.get(
                             url,
@@ -257,7 +257,7 @@ class ReplicationService:
                     download_complete = True
                     total_time = time.time() - download_start_time
                     avg_speed = (file_downloaded / 1024 / 1024) / total_time if total_time > 0 else 0
-                    logger.info(f"[REPLICATION] ✅ {filename} téléchargé ({file_downloaded / (1024*1024):.1f} MB en {total_time:.1f}s, {avg_speed:.2f} MB/s)")
+                    logger.info(f"[REPLICATION] [OK] {filename} téléchargé ({file_downloaded / (1024*1024):.1f} MB en {total_time:.1f}s, {avg_speed:.2f} MB/s)")
 
                 except (requests.exceptions.ChunkedEncodingError,
                         requests.exceptions.ConnectionError,
@@ -265,10 +265,10 @@ class ReplicationService:
                         ConnectionResetError) as e:
                     retry_count += 1
                     if retry_count > max_retries:
-                        logger.error(f"[REPLICATION] ❌ Échec après {max_retries + 1} tentatives: {e}")
+                        logger.error(f"[REPLICATION] [ERROR] Échec après {max_retries + 1} tentatives: {e}")
                         raise Exception(f"Téléchargement échoué après {max_retries + 1} tentatives: {e}")
 
-                    logger.warning(f"[REPLICATION] ⚠️  Erreur ({e}), reprise dans 3s...")
+                    logger.warning(f"[REPLICATION] [WARNING] Erreur ({e}), reprise dans 3s...")
                     time.sleep(3)
 
         finally:
@@ -603,7 +603,7 @@ class ReplicationService:
             logger.info(f"[REPLICATION] Connexion au serveur de destination {destination_server.hostname}...")
             if not vmware_service.connect():
                 raise Exception(f"Impossible de se connecter au serveur de destination {destination_server.hostname}")
-            logger.info(f"[REPLICATION] ✅ Connecté au serveur de destination")
+            logger.info(f"[REPLICATION] [OK] Connecté au serveur de destination")
 
             # Récupérer le premier datastore disponible (70%)
             if progress_callback:
@@ -631,7 +631,7 @@ class ReplicationService:
                 progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
 
             # Créer un callback wrapper pour mapper 0-100% du déploiement vers 75-90% de la progression totale
-            def deploy_progress_callback(deploy_pct, status, message):
+            def deploy_progress_callback(deploy_pct, status='deploying', message='Déploiement en cours...'):
                 if progress_callback:
                     # Mapper 0-100% du déploiement vers 75-90% de la progression totale
                     total_pct = 75 + (15 * deploy_pct / 100)
@@ -695,7 +695,7 @@ class ReplicationService:
 
             if progress_callback:
                 time.sleep(0.3)
-                progress_callback(100, 'completed', f'✅ Réplication terminée avec succès en {duration:.1f}s')
+                progress_callback(100, 'completed', f'[OK] Réplication terminée avec succès en {duration:.1f}s')
 
             # Déconnecter le service VMware de destination
             try:
