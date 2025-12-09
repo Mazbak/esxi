@@ -163,12 +163,13 @@ class ReplicationService:
 
                 logger.info(f"[REPLICATION] Téléchargement {filename}...")
 
-                # Télécharger le VMDK
+                # Télécharger le VMDK avec timeout pour éviter les blocages
                 response = requests.get(
                     url,
                     auth=(esxi_user, esxi_pass),
                     verify=False,
-                    stream=True
+                    stream=True,
+                    timeout=(10, 300)  # 10s connexion, 300s lecture
                 )
                 response.raise_for_status()
 
