@@ -28,6 +28,57 @@ class VMwareService:
         self.content = None
         self.last_error_message = None  # Stocke le dernier message d'erreur détaillé
 
+    def _test_tcp_connectivity(self, host, port, timeout=10):
+        """
+        Teste la connectivité TCP brute vers un hôte avant SmartConnect.
+
+        Cette fonction est CRITIQUE pour les environnements avec plusieurs cartes réseau.
+        Elle permet de détecter si l'hôte est joignable AVANT d'essayer SmartConnect,
+        évitant ainsi les timeouts longs sur la mauvaise interface.
+
+        Args:
+            host: Hostname ou IP du serveur ESXi
+            port: Port (généralement 443)
+            timeout: Timeout en secondes
+
+        Returns:
+            tuple: (success: bool, local_ip: str, error_msg: str)
+        """
+        import socket
+
+        try:
+            # Créer une socket TCP
+            test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            test_socket.settimeout(timeout)
+
+            logger.info(f"[CONNECTIVITY] Test TCP vers {host}:{port} (timeout: {timeout}s)...")
+
+            # Essayer de se connecter
+            test_socket.connect((host, port))
+
+            # Récupérer l'IP locale utilisée pour cette connexion
+            local_ip = test_socket.getsockname()[0]
+
+            test_socket.close()
+
+            logger.info(f"[CONNECTIVITY] [OK] Connecté via interface locale {local_ip}")
+            return (True, local_ip, None)
+
+        except socket.timeout:
+            error_msg = f"Timeout après {timeout}s - L'hôte {host} ne répond pas (vérifier firewall/réseau)"
+            logger.error(f"[CONNECTIVITY] {error_msg}")
+            return (False, None, error_msg)
+
+        except socket.error as e:
+            error_msg = f"Erreur réseau: {e}"
+            logger.error(f"[CONNECTIVITY] {error_msg}")
+            return (False, None, error_msg)
+
+        except Exception as e:
+            error_msg = f"Erreur inattendue: {e}"
+            logger.error(f"[CONNECTIVITY] {error_msg}")
+            return (False, None, error_msg)
+
     def connect(self, timeout=60):
         """
         Établit une connexion au serveur ESXi
@@ -41,6 +92,29 @@ class VMwareService:
         import socket
 
         try:
+            # ÉTAPE 1: PRÉ-TEST DE CONNECTIVITÉ TCP
+            # Critique pour environnements multi-interface réseau!
+            logger.info(f"[VMWARE_SERVICE] === CONNEXION À {self.host}:{self.port} ===")
+
+            # Tester d'abord la connectivité TCP brute (rapide, ~10s max)
+            can_connect, local_ip, error_msg = self._test_tcp_connectivity(
+                self.host,
+                self.port,
+                timeout=min(timeout, 10)  # Max 10s pour le pré-test
+            )
+
+            if not can_connect:
+                logger.error(f"[VMWARE_SERVICE] ÉCHEC pré-test de connectivité: {error_msg}")
+                logger.error(f"[VMWARE_SERVICE] Vérifiez:")
+                logger.error(f"[VMWARE_SERVICE]   1. L'hôte {self.host} est accessible depuis votre réseau")
+                logger.error(f"[VMWARE_SERVICE]   2. Le port {self.port} n'est pas bloqué par un firewall")
+                logger.error(f"[VMWARE_SERVICE]   3. Vous utilisez la bonne carte réseau/interface")
+                logger.error(f"[VMWARE_SERVICE]   4. Le routage réseau est correct (route, VPN, etc.)")
+                return False
+
+            logger.info(f"[VMWARE_SERVICE] Pré-test réussi - Interface locale: {local_ip}")
+
+            # ÉTAPE 2: CONNEXION VMWARE
             # Ignorer les certificats auto-signés
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.check_hostname = False  # désactiver la vérification du hostname
@@ -53,7 +127,7 @@ class VMwareService:
                 # Configurer un timeout plus long pour la connexion initiale
                 # Critique pour réseaux lents, VPN, WAN, etc.
                 socket.setdefaulttimeout(timeout)
-                logger.info(f"[VMWARE_SERVICE] Connexion à {self.host}:{self.port} (timeout: {timeout}s)...")
+                logger.info(f"[VMWARE_SERVICE] Connexion VMware via {local_ip} (timeout: {timeout}s)...")
 
                 self.service_instance = SmartConnect(
                     host=self.host,
@@ -65,7 +139,8 @@ class VMwareService:
                 atexit.register(Disconnect, self.service_instance)
                 self.content = self.service_instance.RetrieveContent()
 
-                logger.info(f"[VMWARE_SERVICE] Connexion établie avec succès à {self.host}")
+                logger.info(f"[VMWARE_SERVICE] [OK] Connexion VMware établie avec succès")
+                logger.info(f"[VMWARE_SERVICE] [OK] Interface utilisée: {local_ip} -> {self.host}:{self.port}")
                 return True
 
             finally:
@@ -73,7 +148,7 @@ class VMwareService:
                 socket.setdefaulttimeout(old_timeout)
 
         except Exception as e:
-            logger.error(f"Erreur de connexion à ESXi {self.host}: {str(e)}")
+            logger.error(f"[VMWARE_SERVICE] [ERROR] Erreur de connexion à ESXi {self.host}: {str(e)}")
             return False
 
     def disconnect(self):
