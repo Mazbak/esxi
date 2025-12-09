@@ -599,6 +599,12 @@ class ReplicationService:
                 port=destination_server.port or 443
             )
 
+            # SE CONNECTER au serveur de destination
+            logger.info(f"[REPLICATION] Connexion au serveur de destination {destination_server.hostname}...")
+            if not vmware_service.connect():
+                raise Exception(f"Impossible de se connecter au serveur de destination {destination_server.hostname}")
+            logger.info(f"[REPLICATION] ✅ Connecté au serveur de destination")
+
             # Récupérer le premier datastore disponible (70%)
             if progress_callback:
                 progress_callback(70, 'deploying', 'Recherche du datastore de destination...')
@@ -691,6 +697,13 @@ class ReplicationService:
                 time.sleep(0.3)
                 progress_callback(100, 'completed', f'✅ Réplication terminée avec succès en {duration:.1f}s')
 
+            # Déconnecter le service VMware de destination
+            try:
+                vmware_service.disconnect()
+                logger.info(f"[REPLICATION] Déconnecté du serveur de destination")
+            except:
+                pass
+
             return {
                 'success': True,
                 'duration_seconds': duration,
@@ -702,6 +715,14 @@ class ReplicationService:
 
             if progress_callback:
                 progress_callback(-1, 'error', f'Erreur: {str(e)}')
+
+            # Déconnecter le service VMware de destination si créé
+            try:
+                if 'vmware_service' in locals():
+                    vmware_service.disconnect()
+                    logger.info(f"[REPLICATION] Déconnecté du serveur de destination (erreur)")
+            except:
+                pass
 
             # Nettoyer le répertoire temporaire en cas d'erreur
             if temp_dir and os.path.exists(temp_dir):
