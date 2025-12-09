@@ -276,7 +276,8 @@ class ReplicationService:
             keepalive_stop.set()
             keepalive_thread.join(timeout=5)  # Attendre max 5 secondes
 
-        return (downloaded, last_lease_update, last_ui_update, chunk_counter, file_size)
+        # Retourner file_downloaded au lieu de file_size car file_size peut être 0 si pas de Content-Length
+        return (downloaded, last_lease_update, last_ui_update, chunk_counter, file_downloaded)
 
     def _export_vm_to_ovf(self, si, vm_name, export_path, esxi_host, esxi_user, esxi_pass, progress_callback=None, replication_id=None):
         """
@@ -412,47 +413,137 @@ class ReplicationService:
             raise
 
     def _create_simple_ovf_descriptor(self, vm_obj, vmdk_files, ovf_path):
-        """Créer un descripteur OVF simplifié"""
-        # Créer la structure OVF de base
-        ovf_ns = "http://schemas.dmtf.org/ovf/envelope/1"
-        rasd_ns = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
-        vssd_ns = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData"
+        """Créer un descripteur OVF valide avec contrôleur SCSI et disques"""
+        import xml.etree.ElementTree as ET
 
-        ET.register_namespace('ovf', ovf_ns)
-        ET.register_namespace('rasd', rasd_ns)
-        ET.register_namespace('vssd', vssd_ns)
+        # Namespaces
+        namespaces = {
+            'ovf': 'http://schemas.dmtf.org/ovf/envelope/1',
+            'rasd': 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData',
+            'vssd': 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData',
+            'vmw': 'http://www.vmware.com/schema/ovf'
+        }
 
-        root = ET.Element(f"{{{ovf_ns}}}Envelope")
+        for prefix, uri in namespaces.items():
+            ET.register_namespace(prefix, uri)
 
-        # Références
-        references = ET.SubElement(root, f"{{{ovf_ns}}}References")
+        # Créer le root element
+        root = ET.Element(f"{{{namespaces['ovf']}}}Envelope",
+                         attrib={
+                             f"{{{namespaces['ovf']}}}version": "1.0",
+                             "xml:lang": "en-US"
+                         })
+
+        # References Section
+        references = ET.SubElement(root, f"{{{namespaces['ovf']}}}References")
         for vmdk in vmdk_files:
-            file_elem = ET.SubElement(references, f"{{{ovf_ns}}}File")
-            file_elem.set(f"{{{ovf_ns}}}href", vmdk['filename'])
-            file_elem.set(f"{{{ovf_ns}}}id", vmdk['filename'])
-            file_elem.set(f"{{{ovf_ns}}}size", str(vmdk['size']))
+            file_elem = ET.SubElement(references, f"{{{namespaces['ovf']}}}File",
+                                     attrib={
+                                         f"{{{namespaces['ovf']}}}href": vmdk['filename'],
+                                         f"{{{namespaces['ovf']}}}id": f"file-{vmdk['filename']}",
+                                         f"{{{namespaces['ovf']}}}size": str(vmdk['size'])
+                                     })
 
         # DiskSection
-        disk_section = ET.SubElement(root, f"{{{ovf_ns}}}DiskSection")
-        ET.SubElement(disk_section, f"{{{ovf_ns}}}Info").text = "Virtual disk information"
+        disk_section = ET.SubElement(root, f"{{{namespaces['ovf']}}}DiskSection")
+        ET.SubElement(disk_section, f"{{{namespaces['ovf']}}}Info").text = "Virtual disk information"
 
         for i, vmdk in enumerate(vmdk_files):
-            disk = ET.SubElement(disk_section, f"{{{ovf_ns}}}Disk")
-            disk.set(f"{{{ovf_ns}}}diskId", f"vmdisk{i+1}")
-            disk.set(f"{{{ovf_ns}}}fileRef", vmdk['filename'])
-            disk.set(f"{{{ovf_ns}}}capacity", str(vmdk['size']))
+            # Capacité en bytes - convertir de bytes à bytes (déjà en bytes)
+            capacity_bytes = vmdk['size']
+            # L'attribut capacity attend des unités d'allocation, utilisons bytes
+            disk = ET.SubElement(disk_section, f"{{{namespaces['ovf']}}}Disk",
+                                attrib={
+                                    f"{{{namespaces['ovf']}}}capacity": str(capacity_bytes),
+                                    f"{{{namespaces['ovf']}}}capacityAllocationUnits": "byte",
+                                    f"{{{namespaces['ovf']}}}diskId": f"vmdisk{i+1}",
+                                    f"{{{namespaces['ovf']}}}fileRef": f"file-{vmdk['filename']}",
+                                    f"{{{namespaces['ovf']}}}format": "http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"
+                                })
+
+        # NetworkSection
+        network_section = ET.SubElement(root, f"{{{namespaces['ovf']}}}NetworkSection")
+        ET.SubElement(network_section, f"{{{namespaces['ovf']}}}Info").text = "Logical networks"
+        network = ET.SubElement(network_section, f"{{{namespaces['ovf']}}}Network",
+                               attrib={f"{{{namespaces['ovf']}}}name": "VM Network"})
+        ET.SubElement(network, f"{{{namespaces['ovf']}}}Description").text = "VM Network"
 
         # VirtualSystem
-        vs = ET.SubElement(root, f"{{{ovf_ns}}}VirtualSystem")
-        vs.set(f"{{{ovf_ns}}}id", vm_obj.name)
-        ET.SubElement(vs, f"{{{ovf_ns}}}Info").text = f"Virtual Machine {vm_obj.name}"
-        ET.SubElement(vs, f"{{{ovf_ns}}}Name").text = vm_obj.name
+        vs = ET.SubElement(root, f"{{{namespaces['ovf']}}}VirtualSystem",
+                          attrib={f"{{{namespaces['ovf']}}}id": vm_obj.name})
+
+        ET.SubElement(vs, f"{{{namespaces['ovf']}}}Info").text = f"A virtual machine"
+        ET.SubElement(vs, f"{{{namespaces['ovf']}}}Name").text = vm_obj.name
+
+        # VirtualHardwareSection
+        vhw = ET.SubElement(vs, f"{{{namespaces['ovf']}}}VirtualHardwareSection")
+        ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Info").text = "Virtual hardware requirements"
+
+        # System (obligatoire)
+        system = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}System")
+        ET.SubElement(system, f"{{{namespaces['vssd']}}}ElementName").text = "Virtual Hardware Family"
+        ET.SubElement(system, f"{{{namespaces['vssd']}}}InstanceID").text = "0"
+        ET.SubElement(system, f"{{{namespaces['vssd']}}}VirtualSystemType").text = "vmx-11"
+
+        # CPU
+        item_cpu = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}AllocationUnits").text = "hertz * 10^6"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}Description").text = "Number of Virtual CPUs"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}ElementName").text = "1 virtual CPU(s)"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}InstanceID").text = "1"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}ResourceType").text = "3"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}VirtualQuantity").text = "1"
+
+        # Memory
+        item_mem = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}AllocationUnits").text = "byte * 2^20"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}Description").text = "Memory Size"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}ElementName").text = "2048MB of memory"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}InstanceID").text = "2"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}ResourceType").text = "4"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}VirtualQuantity").text = "2048"
+
+        # Contrôleur SCSI (OBLIGATOIRE pour les disques!)
+        item_scsi = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}Address").text = "0"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}Description").text = "SCSI Controller"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}ElementName").text = "SCSI Controller 0"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}InstanceID").text = "3"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}ResourceSubType").text = "lsilogic"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}ResourceType").text = "6"
+
+        # Disques (référencent le contrôleur SCSI)
+        for i, vmdk in enumerate(vmdk_files):
+            item_disk = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}AddressOnParent").text = str(i)
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}Description").text = "Hard disk"
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}ElementName").text = f"Hard Disk {i+1}"
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}HostResource").text = f"ovf:/disk/vmdisk{i+1}"
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}InstanceID").text = str(4 + i)
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}Parent").text = "3"  # Référence au contrôleur SCSI
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}ResourceType").text = "17"
+
+        # Network adapter
+        item_net = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}AddressOnParent").text = "7"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}AutomaticAllocation").text = "true"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}Connection").text = "VM Network"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}Description").text = "E1000 ethernet adapter"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}ElementName").text = "Network adapter 1"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}InstanceID").text = str(4 + len(vmdk_files))
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}ResourceSubType").text = "E1000"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}ResourceType").text = "10"
 
         # Écrire le fichier OVF
         tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ")  # Pretty print
         tree.write(ovf_path, encoding='utf-8', xml_declaration=True)
 
         logger.info(f"[REPLICATION] Descripteur OVF créé: {ovf_path}")
+
+        # Logger la taille des disques pour debug
+        for vmdk in vmdk_files:
+            logger.info(f"[REPLICATION] VMDK dans OVF: {vmdk['filename']} - {vmdk['size'] / (1024*1024):.2f} MB")
 
     def replicate_vm(self, replication, progress_callback=None, replication_id=None):
         """
