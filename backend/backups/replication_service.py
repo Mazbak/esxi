@@ -133,7 +133,6 @@ class ReplicationService:
         try:
             while retry_count <= max_retries and not download_complete:
                 download_start_time = time.time()
-                last_chunk_time = time.time()
 
                 try:
                     # Vérifier si un téléchargement partiel existe (pour reprise)
@@ -149,7 +148,7 @@ class ReplicationService:
                             verify=False,
                             stream=True,
                             headers={'Range': f'bytes={bytes_already_downloaded}-'},
-                            timeout=(10, 120)  # 10s connexion, 120s lecture (réduit de 300s)
+                            timeout=(30, 600)  # 30s connexion, 600s (10 min) lecture entre chunks
                         )
                         response.raise_for_status()
 
@@ -168,7 +167,7 @@ class ReplicationService:
                             auth=(esxi_user, esxi_pass),
                             verify=False,
                             stream=True,
-                            timeout=(10, 120)  # 10s connexion, 120s lecture
+                            timeout=(30, 600)  # 30s connexion, 600s (10 min) lecture entre chunks
                         )
                         response.raise_for_status()
 
@@ -182,8 +181,10 @@ class ReplicationService:
                         logger.info(f"[REPLICATION] Utilisation targetSize: {file_size / (1024*1024):.2f} MB")
 
                     with open(local_path, file_mode) as f:
-                        chunk_size = 32768  # 32KB chunks (réduit de 64KB pour plus de callbacks)
+                        chunk_size = 8192 * 1024  # 8 MB chunks pour meilleure performance réseau
                         chunks_received = 0
+                        last_speed_update = time.time()
+                        speed_mbps = 0
 
                         for chunk in response.iter_content(chunk_size=chunk_size):
                             if chunk:
@@ -201,14 +202,6 @@ class ReplicationService:
                                 chunk_counter += 1
                                 chunks_received += 1
 
-                                # Logger le temps entre chunks toutes les 100 chunks (~3.2 MB)
-                                current_time = time.time()
-                                if chunks_received % 100 == 0:
-                                    time_since_last = current_time - last_chunk_time
-                                    speed_mbps = (100 * chunk_size / 1024 / 1024) / time_since_last if time_since_last > 0 else 0
-                                    logger.debug(f"[REPLICATION] 100 chunks reçus en {time_since_last:.2f}s ({speed_mbps:.2f} MB/s)")
-                                    last_chunk_time = current_time
-
                                 # Mise à jour du lease (pour les logs et le keepalive thread)
                                 if total_size > 0:
                                     lease_progress = int((downloaded / total_size) * 100)
@@ -218,6 +211,14 @@ class ReplicationService:
                                 # Mettre à jour la progression pour le keepalive thread
                                 keepalive_last_progress[0] = lease_progress
 
+                                # Calcul de la vitesse (tous les 2 secondes)
+                                current_time = time.time()
+                                if current_time - last_speed_update >= 2.0:
+                                    elapsed_time = current_time - download_start_time
+                                    if elapsed_time > 0:
+                                        speed_mbps = (downloaded / (1024 * 1024)) / elapsed_time
+                                    last_speed_update = current_time
+
                                 # Calcul progression UI (25-60%)
                                 if total_size > 0:
                                     progress_pct = 25 + (35 * downloaded / total_size)
@@ -225,14 +226,33 @@ class ReplicationService:
                                     if file_size > 0:
                                         progress_pct = 25 + (35 * file_downloaded / file_size)
                                     else:
-                                        import math
-                                        downloaded_mb = downloaded / (1024 * 1024)
-                                        if downloaded_mb < 100:
-                                            progress_pct = 25 + (downloaded_mb * 0.05)
-                                        elif downloaded_mb < 1000:
-                                            progress_pct = 30 + (20 * math.log(downloaded_mb / 100) / math.log(10))
+                                        # Formule améliorée pour gros fichiers (basée sur vm_backup_service.py)
+                                        downloaded_gb = downloaded / (1024 * 1024 * 1024)
+                                        if downloaded_gb < 1:
+                                            # 0-1 GB: progression de 25% à 32%
+                                            progress_pct = 25 + int(downloaded_gb * 7)
+                                        elif downloaded_gb < 5:
+                                            # 1-5 GB: progression de 32% à 40%
+                                            progress_pct = 32 + int((downloaded_gb - 1) * 2)
+                                        elif downloaded_gb < 10:
+                                            # 5-10 GB: progression de 40% à 47%
+                                            progress_pct = 40 + int((downloaded_gb - 5) * 1.4)
+                                        elif downloaded_gb < 20:
+                                            # 10-20 GB: progression de 47% à 52%
+                                            progress_pct = 47 + int((downloaded_gb - 10) * 0.5)
+                                        elif downloaded_gb < 50:
+                                            # 20-50 GB: progression de 52% à 56%
+                                            progress_pct = 52 + int((downloaded_gb - 20) * 0.13)
+                                        elif downloaded_gb < 100:
+                                            # 50-100 GB: progression de 56% à 58%
+                                            progress_pct = 56 + int((downloaded_gb - 50) * 0.04)
+                                        elif downloaded_gb < 150:
+                                            # 100-150 GB: progression de 58% à 59%
+                                            progress_pct = 58 + int((downloaded_gb - 100) * 0.02)
                                         else:
-                                            progress_pct = min(50 + (10 * math.log(downloaded_mb / 1000) / math.log(10)), 60)
+                                            # 150+ GB: reste à 59%
+                                            progress_pct = 59
+                                        progress_pct = min(progress_pct, 60)  # Cap à 60% max
 
                                 # Callback UI
                                 if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
@@ -240,16 +260,17 @@ class ReplicationService:
                                         downloaded_mb = downloaded / (1024 * 1024)
                                         file_mb = file_downloaded / (1024 * 1024)
                                         file_size_mb = file_size / (1024 * 1024)
+                                        speed_str = f" ({speed_mbps:.1f} MB/s)" if speed_mbps > 0 else ""
                                         if total_size > 0:
                                             total_mb = total_size / (1024 * 1024)
                                             progress_callback(progress_pct, 'exporting',
-                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)')
+                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%){speed_str}')
                                         elif file_size > 0:
                                             progress_callback(progress_pct, 'exporting',
-                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%)')
+                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%){speed_str}')
                                         else:
                                             progress_callback(progress_pct, 'exporting',
-                                                f'Export {filename}: {file_mb:.1f} MB téléchargés...')
+                                                f'Export {filename}: {file_mb:.1f} MB{speed_str}')
                                         last_ui_update = progress_pct
                                         chunk_counter = 0
 
@@ -266,6 +287,13 @@ class ReplicationService:
                     retry_count += 1
                     if retry_count > max_retries:
                         logger.error(f"[REPLICATION] [ERROR] Échec après {max_retries + 1} tentatives: {e}")
+                        # Nettoyer le fichier partiel en cas d'échec final
+                        if os.path.exists(local_path):
+                            try:
+                                os.remove(local_path)
+                                logger.info(f"[REPLICATION] Fichier partiel supprimé: {local_path}")
+                            except Exception as cleanup_err:
+                                logger.warning(f"[REPLICATION] Erreur nettoyage fichier partiel: {cleanup_err}")
                         raise Exception(f"Téléchargement échoué après {max_retries + 1} tentatives: {e}")
 
                     logger.warning(f"[REPLICATION] [WARNING] Erreur ({e}), reprise dans 3s...")
