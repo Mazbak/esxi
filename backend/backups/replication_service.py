@@ -133,7 +133,6 @@ class ReplicationService:
         try:
             while retry_count <= max_retries and not download_complete:
                 download_start_time = time.time()
-                last_chunk_time = time.time()
 
                 try:
                     # Vérifier si un téléchargement partiel existe (pour reprise)
@@ -149,7 +148,7 @@ class ReplicationService:
                             verify=False,
                             stream=True,
                             headers={'Range': f'bytes={bytes_already_downloaded}-'},
-                            timeout=(10, 120)  # 10s connexion, 120s lecture (réduit de 300s)
+                            timeout=(30, 600)  # 30s connexion, 600s (10 min) lecture entre chunks
                         )
                         response.raise_for_status()
 
@@ -168,7 +167,7 @@ class ReplicationService:
                             auth=(esxi_user, esxi_pass),
                             verify=False,
                             stream=True,
-                            timeout=(10, 120)  # 10s connexion, 120s lecture
+                            timeout=(30, 600)  # 30s connexion, 600s (10 min) lecture entre chunks
                         )
                         response.raise_for_status()
 
@@ -182,8 +181,10 @@ class ReplicationService:
                         logger.info(f"[REPLICATION] Utilisation targetSize: {file_size / (1024*1024):.2f} MB")
 
                     with open(local_path, file_mode) as f:
-                        chunk_size = 32768  # 32KB chunks (réduit de 64KB pour plus de callbacks)
+                        chunk_size = 8192 * 1024  # 8 MB chunks pour meilleure performance réseau
                         chunks_received = 0
+                        last_speed_update = time.time()
+                        speed_mbps = 0
 
                         for chunk in response.iter_content(chunk_size=chunk_size):
                             if chunk:
@@ -201,14 +202,6 @@ class ReplicationService:
                                 chunk_counter += 1
                                 chunks_received += 1
 
-                                # Logger le temps entre chunks toutes les 100 chunks (~3.2 MB)
-                                current_time = time.time()
-                                if chunks_received % 100 == 0:
-                                    time_since_last = current_time - last_chunk_time
-                                    speed_mbps = (100 * chunk_size / 1024 / 1024) / time_since_last if time_since_last > 0 else 0
-                                    logger.debug(f"[REPLICATION] 100 chunks reçus en {time_since_last:.2f}s ({speed_mbps:.2f} MB/s)")
-                                    last_chunk_time = current_time
-
                                 # Mise à jour du lease (pour les logs et le keepalive thread)
                                 if total_size > 0:
                                     lease_progress = int((downloaded / total_size) * 100)
@@ -218,6 +211,14 @@ class ReplicationService:
                                 # Mettre à jour la progression pour le keepalive thread
                                 keepalive_last_progress[0] = lease_progress
 
+                                # Calcul de la vitesse (tous les 2 secondes)
+                                current_time = time.time()
+                                if current_time - last_speed_update >= 2.0:
+                                    elapsed_time = current_time - download_start_time
+                                    if elapsed_time > 0:
+                                        speed_mbps = (downloaded / (1024 * 1024)) / elapsed_time
+                                    last_speed_update = current_time
+
                                 # Calcul progression UI (25-60%)
                                 if total_size > 0:
                                     progress_pct = 25 + (35 * downloaded / total_size)
@@ -225,14 +226,33 @@ class ReplicationService:
                                     if file_size > 0:
                                         progress_pct = 25 + (35 * file_downloaded / file_size)
                                     else:
-                                        import math
-                                        downloaded_mb = downloaded / (1024 * 1024)
-                                        if downloaded_mb < 100:
-                                            progress_pct = 25 + (downloaded_mb * 0.05)
-                                        elif downloaded_mb < 1000:
-                                            progress_pct = 30 + (20 * math.log(downloaded_mb / 100) / math.log(10))
+                                        # Formule améliorée pour gros fichiers (basée sur vm_backup_service.py)
+                                        downloaded_gb = downloaded / (1024 * 1024 * 1024)
+                                        if downloaded_gb < 1:
+                                            # 0-1 GB: progression de 25% à 32%
+                                            progress_pct = 25 + int(downloaded_gb * 7)
+                                        elif downloaded_gb < 5:
+                                            # 1-5 GB: progression de 32% à 40%
+                                            progress_pct = 32 + int((downloaded_gb - 1) * 2)
+                                        elif downloaded_gb < 10:
+                                            # 5-10 GB: progression de 40% à 47%
+                                            progress_pct = 40 + int((downloaded_gb - 5) * 1.4)
+                                        elif downloaded_gb < 20:
+                                            # 10-20 GB: progression de 47% à 52%
+                                            progress_pct = 47 + int((downloaded_gb - 10) * 0.5)
+                                        elif downloaded_gb < 50:
+                                            # 20-50 GB: progression de 52% à 56%
+                                            progress_pct = 52 + int((downloaded_gb - 20) * 0.13)
+                                        elif downloaded_gb < 100:
+                                            # 50-100 GB: progression de 56% à 58%
+                                            progress_pct = 56 + int((downloaded_gb - 50) * 0.04)
+                                        elif downloaded_gb < 150:
+                                            # 100-150 GB: progression de 58% à 59%
+                                            progress_pct = 58 + int((downloaded_gb - 100) * 0.02)
                                         else:
-                                            progress_pct = min(50 + (10 * math.log(downloaded_mb / 1000) / math.log(10)), 60)
+                                            # 150+ GB: reste à 59%
+                                            progress_pct = 59
+                                        progress_pct = min(progress_pct, 60)  # Cap à 60% max
 
                                 # Callback UI
                                 if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
@@ -240,16 +260,17 @@ class ReplicationService:
                                         downloaded_mb = downloaded / (1024 * 1024)
                                         file_mb = file_downloaded / (1024 * 1024)
                                         file_size_mb = file_size / (1024 * 1024)
+                                        speed_str = f" ({speed_mbps:.1f} MB/s)" if speed_mbps > 0 else ""
                                         if total_size > 0:
                                             total_mb = total_size / (1024 * 1024)
                                             progress_callback(progress_pct, 'exporting',
-                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%)')
+                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%){speed_str}')
                                         elif file_size > 0:
                                             progress_callback(progress_pct, 'exporting',
-                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%)')
+                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%){speed_str}')
                                         else:
                                             progress_callback(progress_pct, 'exporting',
-                                                f'Export {filename}: {file_mb:.1f} MB téléchargés...')
+                                                f'Export {filename}: {file_mb:.1f} MB{speed_str}')
                                         last_ui_update = progress_pct
                                         chunk_counter = 0
 
@@ -266,6 +287,13 @@ class ReplicationService:
                     retry_count += 1
                     if retry_count > max_retries:
                         logger.error(f"[REPLICATION] [ERROR] Échec après {max_retries + 1} tentatives: {e}")
+                        # Nettoyer le fichier partiel en cas d'échec final
+                        if os.path.exists(local_path):
+                            try:
+                                os.remove(local_path)
+                                logger.info(f"[REPLICATION] Fichier partiel supprimé: {local_path}")
+                            except Exception as cleanup_err:
+                                logger.warning(f"[REPLICATION] Erreur nettoyage fichier partiel: {cleanup_err}")
                         raise Exception(f"Téléchargement échoué après {max_retries + 1} tentatives: {e}")
 
                     logger.warning(f"[REPLICATION] [WARNING] Erreur ({e}), reprise dans 3s...")
@@ -276,7 +304,8 @@ class ReplicationService:
             keepalive_stop.set()
             keepalive_thread.join(timeout=5)  # Attendre max 5 secondes
 
-        return (downloaded, last_lease_update, last_ui_update, chunk_counter, file_size)
+        # Retourner file_downloaded au lieu de file_size car file_size peut être 0 si pas de Content-Length
+        return (downloaded, last_lease_update, last_ui_update, chunk_counter, file_downloaded)
 
     def _export_vm_to_ovf(self, si, vm_name, export_path, esxi_host, esxi_user, esxi_pass, progress_callback=None, replication_id=None):
         """
@@ -412,47 +441,137 @@ class ReplicationService:
             raise
 
     def _create_simple_ovf_descriptor(self, vm_obj, vmdk_files, ovf_path):
-        """Créer un descripteur OVF simplifié"""
-        # Créer la structure OVF de base
-        ovf_ns = "http://schemas.dmtf.org/ovf/envelope/1"
-        rasd_ns = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
-        vssd_ns = "http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData"
+        """Créer un descripteur OVF valide avec contrôleur SCSI et disques"""
+        import xml.etree.ElementTree as ET
 
-        ET.register_namespace('ovf', ovf_ns)
-        ET.register_namespace('rasd', rasd_ns)
-        ET.register_namespace('vssd', vssd_ns)
+        # Namespaces
+        namespaces = {
+            'ovf': 'http://schemas.dmtf.org/ovf/envelope/1',
+            'rasd': 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData',
+            'vssd': 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData',
+            'vmw': 'http://www.vmware.com/schema/ovf'
+        }
 
-        root = ET.Element(f"{{{ovf_ns}}}Envelope")
+        for prefix, uri in namespaces.items():
+            ET.register_namespace(prefix, uri)
 
-        # Références
-        references = ET.SubElement(root, f"{{{ovf_ns}}}References")
+        # Créer le root element
+        root = ET.Element(f"{{{namespaces['ovf']}}}Envelope",
+                         attrib={
+                             f"{{{namespaces['ovf']}}}version": "1.0",
+                             "xml:lang": "en-US"
+                         })
+
+        # References Section
+        references = ET.SubElement(root, f"{{{namespaces['ovf']}}}References")
         for vmdk in vmdk_files:
-            file_elem = ET.SubElement(references, f"{{{ovf_ns}}}File")
-            file_elem.set(f"{{{ovf_ns}}}href", vmdk['filename'])
-            file_elem.set(f"{{{ovf_ns}}}id", vmdk['filename'])
-            file_elem.set(f"{{{ovf_ns}}}size", str(vmdk['size']))
+            file_elem = ET.SubElement(references, f"{{{namespaces['ovf']}}}File",
+                                     attrib={
+                                         f"{{{namespaces['ovf']}}}href": vmdk['filename'],
+                                         f"{{{namespaces['ovf']}}}id": f"file-{vmdk['filename']}",
+                                         f"{{{namespaces['ovf']}}}size": str(vmdk['size'])
+                                     })
 
         # DiskSection
-        disk_section = ET.SubElement(root, f"{{{ovf_ns}}}DiskSection")
-        ET.SubElement(disk_section, f"{{{ovf_ns}}}Info").text = "Virtual disk information"
+        disk_section = ET.SubElement(root, f"{{{namespaces['ovf']}}}DiskSection")
+        ET.SubElement(disk_section, f"{{{namespaces['ovf']}}}Info").text = "Virtual disk information"
 
         for i, vmdk in enumerate(vmdk_files):
-            disk = ET.SubElement(disk_section, f"{{{ovf_ns}}}Disk")
-            disk.set(f"{{{ovf_ns}}}diskId", f"vmdisk{i+1}")
-            disk.set(f"{{{ovf_ns}}}fileRef", vmdk['filename'])
-            disk.set(f"{{{ovf_ns}}}capacity", str(vmdk['size']))
+            # Capacité en bytes - convertir de bytes à bytes (déjà en bytes)
+            capacity_bytes = vmdk['size']
+            # L'attribut capacity attend des unités d'allocation, utilisons bytes
+            disk = ET.SubElement(disk_section, f"{{{namespaces['ovf']}}}Disk",
+                                attrib={
+                                    f"{{{namespaces['ovf']}}}capacity": str(capacity_bytes),
+                                    f"{{{namespaces['ovf']}}}capacityAllocationUnits": "byte",
+                                    f"{{{namespaces['ovf']}}}diskId": f"vmdisk{i+1}",
+                                    f"{{{namespaces['ovf']}}}fileRef": f"file-{vmdk['filename']}",
+                                    f"{{{namespaces['ovf']}}}format": "http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"
+                                })
+
+        # NetworkSection
+        network_section = ET.SubElement(root, f"{{{namespaces['ovf']}}}NetworkSection")
+        ET.SubElement(network_section, f"{{{namespaces['ovf']}}}Info").text = "Logical networks"
+        network = ET.SubElement(network_section, f"{{{namespaces['ovf']}}}Network",
+                               attrib={f"{{{namespaces['ovf']}}}name": "VM Network"})
+        ET.SubElement(network, f"{{{namespaces['ovf']}}}Description").text = "VM Network"
 
         # VirtualSystem
-        vs = ET.SubElement(root, f"{{{ovf_ns}}}VirtualSystem")
-        vs.set(f"{{{ovf_ns}}}id", vm_obj.name)
-        ET.SubElement(vs, f"{{{ovf_ns}}}Info").text = f"Virtual Machine {vm_obj.name}"
-        ET.SubElement(vs, f"{{{ovf_ns}}}Name").text = vm_obj.name
+        vs = ET.SubElement(root, f"{{{namespaces['ovf']}}}VirtualSystem",
+                          attrib={f"{{{namespaces['ovf']}}}id": vm_obj.name})
+
+        ET.SubElement(vs, f"{{{namespaces['ovf']}}}Info").text = f"A virtual machine"
+        ET.SubElement(vs, f"{{{namespaces['ovf']}}}Name").text = vm_obj.name
+
+        # VirtualHardwareSection
+        vhw = ET.SubElement(vs, f"{{{namespaces['ovf']}}}VirtualHardwareSection")
+        ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Info").text = "Virtual hardware requirements"
+
+        # System (obligatoire)
+        system = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}System")
+        ET.SubElement(system, f"{{{namespaces['vssd']}}}ElementName").text = "Virtual Hardware Family"
+        ET.SubElement(system, f"{{{namespaces['vssd']}}}InstanceID").text = "0"
+        ET.SubElement(system, f"{{{namespaces['vssd']}}}VirtualSystemType").text = "vmx-11"
+
+        # CPU
+        item_cpu = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}AllocationUnits").text = "hertz * 10^6"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}Description").text = "Number of Virtual CPUs"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}ElementName").text = "1 virtual CPU(s)"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}InstanceID").text = "1"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}ResourceType").text = "3"
+        ET.SubElement(item_cpu, f"{{{namespaces['rasd']}}}VirtualQuantity").text = "1"
+
+        # Memory
+        item_mem = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}AllocationUnits").text = "byte * 2^20"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}Description").text = "Memory Size"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}ElementName").text = "2048MB of memory"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}InstanceID").text = "2"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}ResourceType").text = "4"
+        ET.SubElement(item_mem, f"{{{namespaces['rasd']}}}VirtualQuantity").text = "2048"
+
+        # Contrôleur SCSI (OBLIGATOIRE pour les disques!)
+        item_scsi = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}Address").text = "0"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}Description").text = "SCSI Controller"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}ElementName").text = "SCSI Controller 0"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}InstanceID").text = "3"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}ResourceSubType").text = "lsilogic"
+        ET.SubElement(item_scsi, f"{{{namespaces['rasd']}}}ResourceType").text = "6"
+
+        # Disques (référencent le contrôleur SCSI)
+        for i, vmdk in enumerate(vmdk_files):
+            item_disk = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}AddressOnParent").text = str(i)
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}Description").text = "Hard disk"
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}ElementName").text = f"Hard Disk {i+1}"
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}HostResource").text = f"ovf:/disk/vmdisk{i+1}"
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}InstanceID").text = str(4 + i)
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}Parent").text = "3"  # Référence au contrôleur SCSI
+            ET.SubElement(item_disk, f"{{{namespaces['rasd']}}}ResourceType").text = "17"
+
+        # Network adapter
+        item_net = ET.SubElement(vhw, f"{{{namespaces['ovf']}}}Item")
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}AddressOnParent").text = "7"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}AutomaticAllocation").text = "true"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}Connection").text = "VM Network"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}Description").text = "E1000 ethernet adapter"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}ElementName").text = "Network adapter 1"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}InstanceID").text = str(4 + len(vmdk_files))
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}ResourceSubType").text = "E1000"
+        ET.SubElement(item_net, f"{{{namespaces['rasd']}}}ResourceType").text = "10"
 
         # Écrire le fichier OVF
         tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ")  # Pretty print
         tree.write(ovf_path, encoding='utf-8', xml_declaration=True)
 
         logger.info(f"[REPLICATION] Descripteur OVF créé: {ovf_path}")
+
+        # Logger la taille des disques pour debug
+        for vmdk in vmdk_files:
+            logger.info(f"[REPLICATION] VMDK dans OVF: {vmdk['filename']} - {vmdk['size'] / (1024*1024):.2f} MB")
 
     def replicate_vm(self, replication, progress_callback=None, replication_id=None):
         """
@@ -631,11 +750,15 @@ class ReplicationService:
                 progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
 
             # Créer un callback wrapper pour mapper 0-100% du déploiement vers 75-90% de la progression totale
+            # Note: deploy_ovf fait déjà un mapping interne 2-94%, donc on ajuste pour éviter le double mapping
             def deploy_progress_callback(deploy_pct, status='deploying', message='Déploiement en cours...'):
                 if progress_callback:
-                    # Mapper 0-100% du déploiement vers 75-90% de la progression totale
+                    # Mapper intelligemment: 0-100% du déploiement vers 75-90% de la progression totale
+                    # On garde une marge car deploy_ovf va de 2% à 94% en interne
                     total_pct = 75 + (15 * deploy_pct / 100)
                     progress_callback(total_pct, status, message)
+
+            logger.info(f"[REPLICATION] Déploiement OVF avec support d'annulation (replication_id={replication_id})")
 
             deploy_success = vmware_service.deploy_ovf(
                 ovf_path=ovf_path,
@@ -643,7 +766,8 @@ class ReplicationService:
                 datastore_name=dest_datastore,
                 network_name='VM Network',
                 power_on=False,  # Ne pas démarrer la replica automatiquement
-                progress_callback=deploy_progress_callback
+                progress_callback=deploy_progress_callback,
+                restore_id=replication_id  # Utiliser replication_id pour vérifier les annulations
             )
 
             if not deploy_success:
