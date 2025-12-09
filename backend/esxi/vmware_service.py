@@ -119,23 +119,42 @@ class VMwareService:
 
     def get_datastores(self):
         """Récupère les datastores disponibles"""
+        import logging
+        logger = logging.getLogger(__name__)
+
         datastores_list = []
         if not self.content:
+            logger.error("[VMWARE_SERVICE] self.content est None! Impossible de récupérer les datastores")
             return datastores_list
 
-        container = self.content.viewManager.CreateContainerView(
-            self.content.rootFolder, [vim.Datastore], True
-        )
-        for ds in container.view:
-            summary = ds.summary
-            datastores_list.append({
-                'name': summary.name,
-                'type': summary.type,
-                'capacity_gb': summary.capacity // 1024 // 1024 // 1024,
-                'free_space_gb': summary.freeSpace // 1024 // 1024 // 1024,
-                'accessible': summary.accessible
-            })
-        container.Destroy()
+        try:
+            logger.info(f"[VMWARE_SERVICE] Création du ContainerView pour vim.Datastore")
+            container = self.content.viewManager.CreateContainerView(
+                self.content.rootFolder, [vim.Datastore], True
+            )
+
+            logger.info(f"[VMWARE_SERVICE] Nombre de datastores trouvés: {len(container.view)}")
+
+            for ds in container.view:
+                try:
+                    summary = ds.summary
+                    datastore_info = {
+                        'name': summary.name,
+                        'type': summary.type,
+                        'capacity_gb': summary.capacity // 1024 // 1024 // 1024,
+                        'free_space_gb': summary.freeSpace // 1024 // 1024 // 1024,
+                        'accessible': summary.accessible
+                    }
+                    logger.info(f"[VMWARE_SERVICE] Datastore trouvé: {datastore_info}")
+                    datastores_list.append(datastore_info)
+                except Exception as e:
+                    logger.error(f"[VMWARE_SERVICE] Erreur lors de la lecture du datastore: {e}")
+
+            container.Destroy()
+        except Exception as e:
+            logger.error(f"[VMWARE_SERVICE] Erreur lors de la récupération des datastores: {e}", exc_info=True)
+
+        logger.info(f"[VMWARE_SERVICE] Total datastores récupérés: {len(datastores_list)}")
         return datastores_list
 
     def get_networks(self):

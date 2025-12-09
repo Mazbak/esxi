@@ -504,12 +504,14 @@ class ReplicationService:
                 logger.error(f"[REPLICATION] Erreur lors de get_datastores(): {ds_err}", exc_info=True)
                 raise Exception(f"Impossible de récupérer les datastores: {ds_err}")
 
-            if not datastores_info or not datastores_info.get('datastores'):
-                logger.error(f"[REPLICATION] datastores_info est vide ou None: {datastores_info}")
+            # datastores_info est une LISTE de datastores, pas un dictionnaire
+            if not datastores_info or len(datastores_info) == 0:
+                logger.error(f"[REPLICATION] datastores_info est vide: {datastores_info}")
                 raise Exception("Aucun datastore disponible sur le serveur destination")
 
-            dest_datastore = datastores_info['datastores'][0]['name']
-            logger.info(f"[REPLICATION] Datastore destination: {dest_datastore}")
+            # Prendre le premier datastore accessible
+            dest_datastore = datastores_info[0]['name']
+            logger.info(f"[REPLICATION] Datastore destination sélectionné: {dest_datastore} (capacité: {datastores_info[0]['capacity_gb']} GB, libre: {datastores_info[0]['free_space_gb']} GB)")
 
             # Déployer l'OVF (75% → 90%)
             if progress_callback:
