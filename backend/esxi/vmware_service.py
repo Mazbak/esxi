@@ -28,24 +28,50 @@ class VMwareService:
         self.content = None
         self.last_error_message = None  # Stocke le dernier message d'erreur détaillé
 
-    def connect(self):
-        """Établit une connexion au serveur ESXi"""
+    def connect(self, timeout=60):
+        """
+        Établit une connexion au serveur ESXi
+
+        Args:
+            timeout: Timeout de connexion en secondes (défaut: 60s pour réseaux lents/WAN)
+
+        Returns:
+            bool: True si connexion réussie, False sinon
+        """
+        import socket
+
         try:
             # Ignorer les certificats auto-signés
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.check_hostname = False  # désactiver la vérification du hostname
             context.verify_mode = ssl.CERT_NONE
 
-            self.service_instance = SmartConnect(
-                host=self.host,
-                user=self.user,
-                pwd=self.password,
-                port=self.port,
-                sslContext=context
-            )
-            atexit.register(Disconnect, self.service_instance)
-            self.content = self.service_instance.RetrieveContent()
-            return True
+            # Sauvegarder le timeout par défaut de socket
+            old_timeout = socket.getdefaulttimeout()
+
+            try:
+                # Configurer un timeout plus long pour la connexion initiale
+                # Critique pour réseaux lents, VPN, WAN, etc.
+                socket.setdefaulttimeout(timeout)
+                logger.info(f"[VMWARE_SERVICE] Connexion à {self.host}:{self.port} (timeout: {timeout}s)...")
+
+                self.service_instance = SmartConnect(
+                    host=self.host,
+                    user=self.user,
+                    pwd=self.password,
+                    port=self.port,
+                    sslContext=context
+                )
+                atexit.register(Disconnect, self.service_instance)
+                self.content = self.service_instance.RetrieveContent()
+
+                logger.info(f"[VMWARE_SERVICE] Connexion établie avec succès à {self.host}")
+                return True
+
+            finally:
+                # Restaurer le timeout par défaut
+                socket.setdefaulttimeout(old_timeout)
+
         except Exception as e:
             logger.error(f"Erreur de connexion à ESXi {self.host}: {str(e)}")
             return False
