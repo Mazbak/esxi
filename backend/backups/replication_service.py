@@ -750,11 +750,15 @@ class ReplicationService:
                 progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
 
             # Créer un callback wrapper pour mapper 0-100% du déploiement vers 75-90% de la progression totale
+            # Note: deploy_ovf fait déjà un mapping interne 2-94%, donc on ajuste pour éviter le double mapping
             def deploy_progress_callback(deploy_pct, status='deploying', message='Déploiement en cours...'):
                 if progress_callback:
-                    # Mapper 0-100% du déploiement vers 75-90% de la progression totale
+                    # Mapper intelligemment: 0-100% du déploiement vers 75-90% de la progression totale
+                    # On garde une marge car deploy_ovf va de 2% à 94% en interne
                     total_pct = 75 + (15 * deploy_pct / 100)
                     progress_callback(total_pct, status, message)
+
+            logger.info(f"[REPLICATION] Déploiement OVF avec support d'annulation (replication_id={replication_id})")
 
             deploy_success = vmware_service.deploy_ovf(
                 ovf_path=ovf_path,
@@ -762,7 +766,8 @@ class ReplicationService:
                 datastore_name=dest_datastore,
                 network_name='VM Network',
                 power_on=False,  # Ne pas démarrer la replica automatiquement
-                progress_callback=deploy_progress_callback
+                progress_callback=deploy_progress_callback,
+                restore_id=replication_id  # Utiliser replication_id pour vérifier les annulations
             )
 
             if not deploy_success:
