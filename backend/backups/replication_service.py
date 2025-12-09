@@ -34,26 +34,42 @@ class ReplicationService:
 
     def _connect_to_server(self, esxi_server):
         """
-        Établir une connexion à un serveur ESXi
+        Établir une connexion à un serveur ESXi en utilisant VMwareService
+        avec pré-test de connectivité TCP pour environnements multi-interface.
 
         Args:
             esxi_server: Instance ESXiServer
 
         Returns:
             ServiceInstance: Connexion pyVmomi
+
+        Raises:
+            Exception: Si la connexion échoue
         """
         try:
-            si = SmartConnect(
+            logger.info(f"[REPLICATION] Connexion à {esxi_server.hostname} via VMwareService...")
+
+            # Utiliser VMwareService qui inclut le pré-test TCP et la détection d'interface
+            from esxi.vmware_service import VMwareService
+
+            vmware = VMwareService(
                 host=esxi_server.hostname,
                 user=esxi_server.username,
-                pwd=esxi_server.password,
-                port=esxi_server.port or 443,
-                sslContext=self.context
+                password=esxi_server.password,
+                port=esxi_server.port or 443
             )
-            atexit.register(Disconnect, si)
-            return si
+
+            # Appeler connect() qui fait le pré-test TCP automatiquement
+            if not vmware.connect(timeout=60):
+                raise Exception(f"Impossible de se connecter à {esxi_server.hostname}")
+
+            logger.info(f"[REPLICATION] Connexion établie à {esxi_server.hostname}")
+
+            # Retourner le service_instance pour compatibilité avec le code existant
+            return vmware.service_instance
+
         except Exception as e:
-            logger.error(f"Erreur connexion à {esxi_server.hostname}: {e}")
+            logger.error(f"[REPLICATION] Erreur connexion à {esxi_server.hostname}: {e}")
             raise
 
     def _get_vm_by_name(self, si, vm_name):
