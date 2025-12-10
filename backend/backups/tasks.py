@@ -876,12 +876,45 @@ def execute_replication(replication_id):
             logger.warning(f"[CELERY-REPLICATION-EXEC] Réplication {replication_id} désactivée, annulation")
             return {'status': 'cancelled', 'reason': 'Replication is inactive'}
 
+        # TOUJOURS vérifier si une replica existe déjà (même VM)
+        service = ReplicationService()
+        replica_vm_name = f"{vm_name}_replica"
+
+        try:
+            dest_si = service._connect_to_server(replication.destination_server)
+            existing_replica = service._get_vm_by_name(dest_si, replica_vm_name)
+            from pyVim.connect import Disconnect
+            Disconnect(dest_si)
+
+            if existing_replica:
+                logger.warning(f"[CELERY-REPLICATION-EXEC] ⚠️ REPLICA EXISTANTE DÉTECTÉE: {replica_vm_name}")
+                logger.warning(f"[CELERY-REPLICATION-EXEC] La réplication automatique est ANNULÉE pour éviter l'écrasement")
+                logger.warning(f"[CELERY-REPLICATION-EXEC] Action requise: Supprimez manuellement la replica ou lancez une réplication manuelle")
+
+                # Envoyer une notification à l'utilisateur
+                try:
+                    EmailNotificationService.send_backup_failure_notification(
+                        vm_name=vm_name,
+                        error_message=f"Une replica '{replica_vm_name}' existe déjà sur {replication.destination_server.hostname}. "
+                                     f"Supprimez-la manuellement avant de lancer une nouvelle réplication."
+                    )
+                except Exception as email_error:
+                    logger.warning(f"[CELERY-REPLICATION-EXEC] Email notification failed: {email_error}")
+
+                return {
+                    'status': 'skipped',
+                    'reason': f'Replica {replica_vm_name} already exists on destination server. Manual deletion required.',
+                    'replication_id': replication_id
+                }
+        except Exception as check_error:
+            logger.warning(f"[CELERY-REPLICATION-EXEC] Erreur vérification replica: {check_error}")
+            # En cas d'erreur de vérification, continuer quand même (pour ne pas bloquer)
+
+        logger.info(f"[CELERY-REPLICATION-EXEC] ✓ Aucune replica existante, démarrage de la réplication...")
+
         # Mettre à jour le statut
         replication.status = 'syncing'
         replication.save()
-
-        # Exécuter la réplication via le service
-        service = ReplicationService()
 
         # Fonction de callback pour logger la progression
         def progress_callback(progress_percent, status_val, message):
