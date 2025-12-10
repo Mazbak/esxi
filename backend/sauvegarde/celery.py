@@ -28,6 +28,16 @@ app.conf.beat_schedule = {
         'task': 'backups.tasks.check_and_execute_snapshot_schedules',
         'schedule': crontab(minute='*'),  # Toutes les minutes
     },
+    # Vérifier et exécuter les réplications automatiques toutes les 5 minutes
+    'check-and-execute-replications': {
+        'task': 'backups.tasks.check_and_execute_replications',
+        'schedule': crontab(minute='*/5'),  # Toutes les 5 minutes
+    },
+    # Vérifier et déclencher les auto-failovers toutes les minutes
+    'check-and-trigger-auto-failovers': {
+        'task': 'backups.tasks.check_and_trigger_auto_failovers',
+        'schedule': crontab(minute='*'),  # Toutes les minutes pour réaction rapide
+    },
     # Nettoyer les anciens backups tous les jours à 3h du matin
     'cleanup-old-backups': {
         'task': 'backups.tasks.cleanup_old_backups',

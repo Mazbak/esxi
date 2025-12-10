@@ -682,18 +682,18 @@ def execute_vm_backup(backup_job_id):
 def execute_backup_verification(verification_id):
     """
     Tâche Celery pour exécuter une vérification SureBackup
-    
+
     Args:
         verification_id: ID de la BackupVerification à exécuter
     """
     from backups.models import BackupVerification
-    
+
     logger.info(f"[CELERY-VERIFICATION] === VÉRIFICATION SUREBACKUP ===")
     logger.info(f"[CELERY-VERIFICATION] Verification ID: {verification_id}")
-    
+
     try:
         verification = BackupVerification.objects.get(id=verification_id)
-        
+
         # Déterminer le nom de la VM
         if verification.ovf_export:
             vm_name = verification.ovf_export.virtual_machine.name if verification.ovf_export.virtual_machine else "VM Inconnue"
@@ -701,21 +701,21 @@ def execute_backup_verification(verification_id):
             vm_name = verification.vm_backup.virtual_machine.name
         else:
             vm_name = "VM Inconnue"
-        
+
         logger.info(f"[CELERY-VERIFICATION] VM: {vm_name}, Test type: {verification.test_type}")
-        
+
         # Mettre à jour le statut
         verification.status = 'running'
         verification.started_at = timezone.now()
         verification.save()
-        
+
         try:
             # TODO: Implémenter la logique de vérification réelle ici
             # Pour l'instant, on simule un test réussi
-            
+
             import time
             time.sleep(2)  # Simuler le temps de vérification
-            
+
             # Simuler un résultat de vérification
             verification_details = f"""Test type: {verification.get_test_type_display()}
 Serveur ESXi: {verification.esxi_server.hostname}
@@ -724,14 +724,14 @@ Tests effectués:
 ✓ Boot de la VM
 ✓ Connectivité réseau
 ✓ Services principaux"""
-            
+
             verification.status = 'passed'
             verification.completed_at = timezone.now()
             verification.test_results = verification_details
             verification.save()
-            
+
             logger.info(f"[CELERY-VERIFICATION] ✓ Vérification réussie pour {vm_name}")
-            
+
             # Send success email notification
             try:
                 EmailNotificationService.send_surebackup_success_notification(
@@ -740,18 +740,18 @@ Tests effectués:
                 )
             except Exception as email_error:
                 logger.warning(f"[CELERY-VERIFICATION] Email notification failed: {email_error}")
-            
+
             return {'status': 'success', 'verification_id': verification.id}
-            
+
         except Exception as e:
             error_message = str(e)
             verification.status = 'failed'
             verification.completed_at = timezone.now()
             verification.error_message = error_message
             verification.save()
-            
+
             logger.error(f"[CELERY-VERIFICATION] ✗ Vérification échouée pour {vm_name}: {error_message}")
-            
+
             # Send failure email notification
             try:
                 EmailNotificationService.send_surebackup_failure_notification(
@@ -760,12 +760,273 @@ Tests effectués:
                 )
             except Exception as email_error:
                 logger.warning(f"[CELERY-VERIFICATION] Email notification failed: {email_error}")
-            
+
             return {'status': 'failed', 'error': error_message}
-            
+
     except BackupVerification.DoesNotExist:
         logger.error(f"[CELERY-VERIFICATION] Verification {verification_id} introuvable")
         return {'status': 'failed', 'error': f'Verification {verification_id} not found'}
     except Exception as e:
         logger.error(f"[CELERY-VERIFICATION] ✗ Erreur exécution vérification: {e}", exc_info=True)
         return {'status': 'failed', 'error': str(e)}
+
+
+@shared_task
+def check_and_execute_replications():
+    """
+    Tâche périodique pour vérifier et exécuter les réplications automatiques
+
+    Cette tâche doit être exécutée régulièrement (ex: toutes les 5 minutes)
+    pour vérifier si des réplications doivent être lancées selon leur intervalle configuré.
+    """
+    logger.info("[CELERY-REPLICATION] === VÉRIFICATION DES RÉPLICATIONS ===")
+
+    from backups.models import VMReplication
+
+    # Récupérer toutes les réplications actives
+    active_replications = VMReplication.objects.filter(is_active=True)
+
+    logger.info(f"[CELERY-REPLICATION] {active_replications.count()} réplication(s) active(s)")
+
+    executed_count = 0
+    skipped_count = 0
+    failed_count = 0
+
+    for replication in active_replications:
+        try:
+            logger.info(f"[CELERY-REPLICATION] Vérification réplication {replication.id} ({replication.name})")
+
+            # Vérifier si la réplication doit être exécutée
+            now = timezone.now()
+            should_run = False
+
+            if not replication.last_replication_at:
+                # Jamais répliquée, on lance
+                should_run = True
+                reason = "Première réplication"
+            else:
+                # Calculer le temps écoulé depuis la dernière réplication
+                minutes_since_last = (now - replication.last_replication_at).total_seconds() / 60
+
+                if minutes_since_last >= replication.replication_interval_minutes:
+                    should_run = True
+                    reason = f"Intervalle écoulé ({minutes_since_last:.0f} min >= {replication.replication_interval_minutes} min)"
+                else:
+                    time_remaining = replication.replication_interval_minutes - minutes_since_last
+                    reason = f"Intervalle non écoulé (reste {time_remaining:.0f} min)"
+
+            if should_run:
+                logger.info(f"[CELERY-REPLICATION] ✓ Exécution réplication {replication.id}: {reason}")
+
+                # Lancer la tâche de réplication en arrière-plan
+                execute_replication.delay(replication.id)
+
+                executed_count += 1
+                logger.info(f"[CELERY-REPLICATION] ✓ Tâche de réplication {replication.id} lancée")
+            else:
+                skipped_count += 1
+                logger.info(f"[CELERY-REPLICATION] ⊘ Réplication {replication.id} non éligible: {reason}")
+
+        except Exception as e:
+            failed_count += 1
+            logger.error(
+                f"[CELERY-REPLICATION] ✗ Erreur traitement réplication {replication.id}: {e}",
+                exc_info=True
+            )
+
+    logger.info("[CELERY-REPLICATION] === RÉSUMÉ ===")
+    logger.info(f"[CELERY-REPLICATION] Exécutées: {executed_count}")
+    logger.info(f"[CELERY-REPLICATION] Ignorées: {skipped_count}")
+    logger.info(f"[CELERY-REPLICATION] Échecs: {failed_count}")
+
+    return {
+        'executed': executed_count,
+        'skipped': skipped_count,
+        'failed': failed_count
+    }
+
+
+@shared_task
+def execute_replication(replication_id):
+    """
+    Tâche pour exécuter une réplication de VM en arrière-plan
+
+    Args:
+        replication_id: ID de la VMReplication à exécuter
+    """
+    from backups.models import VMReplication
+    from backups.replication_service import ReplicationService
+
+    logger.info(f"[CELERY-REPLICATION-EXEC] === DÉBUT RÉPLICATION {replication_id} ===")
+
+    try:
+        # Récupérer la réplication avec les relations
+        replication = VMReplication.objects.select_related(
+            'source_server',
+            'destination_server',
+            'virtual_machine',
+            'virtual_machine__server'
+        ).get(id=replication_id)
+
+        vm_name = replication.virtual_machine.name
+        logger.info(f"[CELERY-REPLICATION-EXEC] VM: {vm_name}, Intervalle: {replication.replication_interval_minutes} min")
+
+        # Vérifier que la réplication est toujours active
+        if not replication.is_active:
+            logger.warning(f"[CELERY-REPLICATION-EXEC] Réplication {replication_id} désactivée, annulation")
+            return {'status': 'cancelled', 'reason': 'Replication is inactive'}
+
+        # Mettre à jour le statut
+        replication.status = 'syncing'
+        replication.save()
+
+        # Exécuter la réplication via le service
+        service = ReplicationService()
+
+        # Fonction de callback pour logger la progression
+        def progress_callback(progress_percent, status_val, message):
+            logger.info(f"[CELERY-REPLICATION-EXEC] {replication_id}: {progress_percent}% - {status_val} - {message}")
+
+        result = service.replicate_vm(
+            replication,
+            progress_callback=progress_callback,
+            replication_id=None  # Pas d'ID pour annulation dans le contexte Celery
+        )
+
+        logger.info(f"[CELERY-REPLICATION-EXEC] ✓ Réplication terminée avec succès: {vm_name}")
+
+        # Envoyer notification de succès
+        try:
+            EmailNotificationService.send_backup_success_notification(
+                vm_name=vm_name,
+                backup_path=f"Réplication vers {replication.destination_server.hostname}"
+            )
+        except Exception as email_error:
+            logger.warning(f"[CELERY-REPLICATION-EXEC] Email notification failed: {email_error}")
+
+        return {'status': 'success', 'replication_id': replication_id}
+
+    except VMReplication.DoesNotExist:
+        logger.error(f"[CELERY-REPLICATION-EXEC] Réplication {replication_id} introuvable")
+        return {'status': 'failed', 'error': f'Replication {replication_id} not found'}
+    except Exception as e:
+        logger.error(f"[CELERY-REPLICATION-EXEC] ✗ Erreur réplication: {e}", exc_info=True)
+
+        # Mettre à jour le statut en cas d'erreur
+        try:
+            replication = VMReplication.objects.get(id=replication_id)
+            replication.status = 'error'
+            replication.save()
+
+            # Envoyer notification d'échec
+            try:
+                EmailNotificationService.send_backup_failure_notification(
+                    vm_name=replication.virtual_machine.name,
+                    error_message=str(e)
+                )
+            except Exception as email_error:
+                logger.warning(f"[CELERY-REPLICATION-EXEC] Email notification failed: {email_error}")
+
+        except:
+            pass
+
+        return {'status': 'failed', 'error': str(e)}
+
+
+@shared_task
+def check_and_trigger_auto_failovers():
+    """
+    Tâche périodique pour vérifier et déclencher les failovers automatiques
+
+    Cette tâche doit être exécutée régulièrement (ex: toutes les minutes)
+    pour détecter les pannes et déclencher automatiquement le failover si configuré.
+    """
+    logger.info("[CELERY-FAILOVER] === VÉRIFICATION AUTO-FAILOVER ===")
+
+    from backups.models import VMReplication, FailoverEvent
+    from backups.replication_service import ReplicationService
+
+    # Récupérer toutes les réplications avec failover automatique activé
+    auto_failover_replications = VMReplication.objects.filter(
+        is_active=True,
+        failover_mode='automatic'
+    )
+
+    logger.info(f"[CELERY-FAILOVER] {auto_failover_replications.count()} réplication(s) en mode automatique")
+
+    triggered_count = 0
+    skipped_count = 0
+    failed_count = 0
+
+    service = ReplicationService()
+
+    for replication in auto_failover_replications:
+        try:
+            logger.info(f"[CELERY-FAILOVER] Vérification réplication {replication.id} ({replication.name})")
+
+            # Vérifier si un failover automatique doit être déclenché
+            result = service.check_and_trigger_auto_failover(replication)
+
+            if result.get('should_failover'):
+                reason = result.get('reason', 'Panne détectée')
+                logger.warning(f"[CELERY-FAILOVER] ⚠️  DÉCLENCHEMENT AUTO-FAILOVER: {reason}")
+
+                # Créer l'événement de failover
+                failover_event = FailoverEvent.objects.create(
+                    replication=replication,
+                    failover_type='automatic',
+                    status='initiated',
+                    triggered_by=None,  # Automatique, pas d'utilisateur
+                    reason=f"Auto-failover: {reason}"
+                )
+
+                logger.info(f"[CELERY-FAILOVER] Événement failover créé: {failover_event.id}")
+
+                # Exécuter le failover
+                failover_result = service.execute_failover(failover_event, test_mode=False)
+
+                if failover_result['success']:
+                    triggered_count += 1
+                    logger.info(f"[CELERY-FAILOVER] ✓ Failover réussi: {failover_result['message']}")
+
+                    # Envoyer notification d'urgence
+                    try:
+                        EmailNotificationService.send_backup_failure_notification(
+                            vm_name=replication.virtual_machine.name,
+                            error_message=f"AUTO-FAILOVER DÉCLENCHÉ: {reason}. VM basculée vers {replication.destination_server.hostname}"
+                        )
+                    except Exception as email_error:
+                        logger.warning(f"[CELERY-FAILOVER] Email notification failed: {email_error}")
+                else:
+                    failed_count += 1
+                    logger.error(f"[CELERY-FAILOVER] ✗ Failover échoué: {failover_result.get('error')}")
+
+                    # Envoyer notification d'échec critique
+                    try:
+                        EmailNotificationService.send_backup_failure_notification(
+                            vm_name=replication.virtual_machine.name,
+                            error_message=f"ÉCHEC AUTO-FAILOVER: {failover_result.get('error')}"
+                        )
+                    except Exception as email_error:
+                        logger.warning(f"[CELERY-FAILOVER] Email notification failed: {email_error}")
+            else:
+                skipped_count += 1
+                logger.info(f"[CELERY-FAILOVER] ⊘ Pas de failover nécessaire: {result.get('reason')}")
+
+        except Exception as e:
+            failed_count += 1
+            logger.error(
+                f"[CELERY-FAILOVER] ✗ Erreur vérification failover {replication.id}: {e}",
+                exc_info=True
+            )
+
+    logger.info("[CELERY-FAILOVER] === RÉSUMÉ ===")
+    logger.info(f"[CELERY-FAILOVER] Déclenchés: {triggered_count}")
+    logger.info(f"[CELERY-FAILOVER] Ignorés: {skipped_count}")
+    logger.info(f"[CELERY-FAILOVER] Échecs: {failed_count}")
+
+    return {
+        'triggered': triggered_count,
+        'skipped': skipped_count,
+        'failed': failed_count
+    }
