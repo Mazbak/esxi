@@ -721,9 +721,30 @@ async function saveReplication() {
   saving.value = true
   try {
     if (editingReplication.value) {
+      // Mode édition
       await vmReplicationsAPI.update(editingReplication.value.id, form.value)
       toast.success('Réplication mise à jour avec succès')
     } else {
+      // Mode création - Vérifier si une réplication existe déjà
+      const existingReplication = replications.value.find(
+        r => r.virtual_machine === form.value.virtual_machine &&
+             r.destination_server === form.value.destination_server
+      )
+
+      if (existingReplication) {
+        // Une réplication existe déjà pour cette VM vers ce serveur
+        const vmName = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)?.name || 'cette VM'
+        const serverName = servers.value.find(s => s.id === form.value.destination_server)?.name || 'ce serveur'
+
+        toast.error(
+          `Une réplication existe déjà pour ${vmName} vers ${serverName}. ` +
+          `Veuillez éditer la réplication existante ou choisir un autre serveur de destination.`,
+          { duration: 6000 }
+        )
+        return
+      }
+
+      // Créer la nouvelle réplication
       await vmReplicationsAPI.create(form.value)
       toast.success('Réplication créée avec succès')
     }
@@ -731,7 +752,50 @@ async function saveReplication() {
     fetchData()
   } catch (error) {
     console.error('Erreur sauvegarde:', error)
-    toast.error('Erreur lors de la sauvegarde')
+    console.error('Détails erreur:', error.response?.data)
+
+    // Gérer les erreurs de validation du backend
+    if (error.response?.status === 400) {
+      const errors = error.response.data
+
+      // Erreur de contrainte unique
+      if (errors.non_field_errors) {
+        const uniqueError = errors.non_field_errors.find(
+          err => err.includes('unique') || err.includes('must make a unique set')
+        )
+
+        if (uniqueError) {
+          const vmName = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)?.name || 'cette VM'
+          const serverName = servers.value.find(s => s.id === form.value.destination_server)?.name || 'ce serveur'
+
+          toast.error(
+            `⚠️ Une réplication existe déjà pour ${vmName} vers ${serverName}. ` +
+            `Veuillez éditer la réplication existante ou choisir un autre serveur de destination.`,
+            { duration: 6000 }
+          )
+          return
+        }
+      }
+
+      // Autres erreurs de validation
+      if (errors.destination_datastore) {
+        toast.error(`Erreur datastore: ${errors.destination_datastore[0]}`)
+        return
+      }
+
+      if (errors.virtual_machine) {
+        toast.error(`Erreur VM: ${errors.virtual_machine[0]}`)
+        return
+      }
+
+      if (errors.destination_server) {
+        toast.error(`Erreur serveur destination: ${errors.destination_server[0]}`)
+        return
+      }
+    }
+
+    // Erreur générique
+    toast.error('Erreur lors de la sauvegarde de la réplication')
   } finally {
     saving.value = false
   }
