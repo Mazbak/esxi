@@ -2681,7 +2681,29 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['virtual_machine', 'source_server', 'destination_server', 'status', 'is_active']
     ordering_fields = ['created_at', 'last_replication_at', 'name']
     ordering = ['-created_at']
-    
+
+    def create(self, request, *args, **kwargs):
+        """Override create pour logger les erreurs de validation"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Logger les données reçues
+        logger.info(f"[REPLICATION CREATE] Données reçues: {request.data}")
+
+        serializer = self.get_serializer(data=request.data)
+
+        # Valider et logger les erreurs si validation échoue
+        if not serializer.is_valid():
+            logger.error(f"[REPLICATION CREATE] Erreurs de validation: {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Si validation OK, créer l'objet
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+
+        logger.info(f"[REPLICATION CREATE] Réplication créée avec succès: {serializer.data.get('id')}")
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     @action(detail=True, methods=['post'])
     def start_replication(self, request, pk=None):
         """Démarrer une réplication manuelle immédiate avec progression"""
