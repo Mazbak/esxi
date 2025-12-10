@@ -2946,7 +2946,7 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
 
         replication = self.get_object()
         vm_name = replication.virtual_machine.name
-        dest_server_name = replication.destination_server.name
+        dest_server_name = replication.destination_server.hostname
 
         logger.info(f"[REPLICATION DELETE] Demande de suppression de la réplication: {replication.name}")
 
