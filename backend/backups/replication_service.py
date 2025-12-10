@@ -1045,3 +1045,114 @@ class ReplicationService:
                     }
 
             return {'should_failover': False, 'reason': f'Serveur source inaccessible (en attente du délai): {e}'}
+
+    def delete_replicated_vm(self, replication):
+        """
+        Supprimer la VM répliquée du serveur de destination
+
+        Args:
+            replication: Instance VMReplication
+
+        Returns:
+            dict: Résultat de la suppression avec 'success' (bool) et 'message' (str)
+        """
+        try:
+            logger.info(f"[REPLICATION DELETE] Début de la suppression de la VM répliquée: {replication.virtual_machine.name}")
+
+            # Connexion au serveur de destination
+            dest_server = replication.destination_server
+            logger.info(f"[REPLICATION DELETE] Connexion au serveur de destination: {dest_server.hostname}")
+
+            si = self._connect_to_server(dest_server)
+
+            # Trouver la VM répliquée sur le serveur de destination
+            # La VM répliquée a le même nom que la VM source
+            vm_name = replication.virtual_machine.name
+            logger.info(f"[REPLICATION DELETE] Recherche de la VM: {vm_name}")
+
+            vm = self._get_vm_by_name(si, vm_name)
+
+            if not vm:
+                logger.warning(f"[REPLICATION DELETE] VM {vm_name} non trouvée sur le serveur de destination")
+                Disconnect(si)
+                return {
+                    'success': True,
+                    'message': f'VM {vm_name} non trouvée sur le serveur de destination (peut-être déjà supprimée)'
+                }
+
+            # Vérifier l'état de la VM
+            power_state = vm.runtime.powerState
+            logger.info(f"[REPLICATION DELETE] État de la VM: {power_state}")
+
+            # Si la VM est allumée, l'éteindre d'abord
+            if power_state == vim.VirtualMachinePowerState.poweredOn:
+                logger.info(f"[REPLICATION DELETE] Extinction de la VM {vm_name}...")
+                try:
+                    task = vm.PowerOffVM_Task()
+                    # Attendre que la tâche se termine (timeout 60s)
+                    import time
+                    timeout = 60
+                    elapsed = 0
+                    while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                        time.sleep(1)
+                        elapsed += 1
+                        if elapsed >= timeout:
+                            logger.warning(f"[REPLICATION DELETE] Timeout lors de l'extinction de la VM")
+                            break
+
+                    if task.info.state == vim.TaskInfo.State.error:
+                        logger.error(f"[REPLICATION DELETE] Erreur lors de l'extinction: {task.info.error}")
+                    else:
+                        logger.info(f"[REPLICATION DELETE] VM éteinte avec succès")
+                except Exception as e:
+                    logger.warning(f"[REPLICATION DELETE] Erreur lors de l'extinction (la VM sera supprimée quand même): {e}")
+
+            # Supprimer la VM
+            logger.info(f"[REPLICATION DELETE] Suppression de la VM {vm_name}...")
+            try:
+                task = vm.Destroy_Task()
+                # Attendre que la tâche se termine (timeout 120s)
+                import time
+                timeout = 120
+                elapsed = 0
+                while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                    time.sleep(1)
+                    elapsed += 1
+                    if elapsed >= timeout:
+                        logger.error(f"[REPLICATION DELETE] Timeout lors de la suppression de la VM")
+                        Disconnect(si)
+                        return {
+                            'success': False,
+                            'message': f'Timeout lors de la suppression de la VM {vm_name}'
+                        }
+
+                if task.info.state == vim.TaskInfo.State.error:
+                    error_msg = str(task.info.error.msg) if task.info.error else 'Erreur inconnue'
+                    logger.error(f"[REPLICATION DELETE] Erreur lors de la suppression: {error_msg}")
+                    Disconnect(si)
+                    return {
+                        'success': False,
+                        'message': f'Erreur lors de la suppression de la VM {vm_name}: {error_msg}'
+                    }
+
+                logger.info(f"[REPLICATION DELETE] VM {vm_name} supprimée avec succès du serveur {dest_server.hostname}")
+                Disconnect(si)
+                return {
+                    'success': True,
+                    'message': f'VM {vm_name} supprimée avec succès du serveur de destination'
+                }
+
+            except Exception as e:
+                logger.error(f"[REPLICATION DELETE] Exception lors de la suppression de la VM: {e}", exc_info=True)
+                Disconnect(si)
+                return {
+                    'success': False,
+                    'message': f'Exception lors de la suppression de la VM {vm_name}: {str(e)}'
+                }
+
+        except Exception as e:
+            logger.error(f"[REPLICATION DELETE] Erreur lors de la connexion ou recherche de la VM: {e}", exc_info=True)
+            return {
+                'success': False,
+                'message': f'Erreur lors de la suppression: {str(e)}'
+            }

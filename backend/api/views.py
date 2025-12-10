@@ -2937,6 +2937,53 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 'error': result['message']
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Supprimer une réplication ET la VM répliquée du serveur de destination
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        replication = self.get_object()
+        vm_name = replication.virtual_machine.name
+        dest_server_name = replication.destination_server.name
+
+        logger.info(f"[REPLICATION DELETE] Demande de suppression de la réplication: {replication.name}")
+
+        # Supprimer la VM du serveur de destination
+        from backups.replication_service import ReplicationService
+        service = ReplicationService()
+
+        logger.info(f"[REPLICATION DELETE] Suppression de la VM {vm_name} du serveur {dest_server_name}...")
+        delete_result = service.delete_replicated_vm(replication)
+
+        if not delete_result['success']:
+            logger.warning(f"[REPLICATION DELETE] La suppression de la VM a échoué: {delete_result['message']}")
+            # On continue quand même pour supprimer l'entrée DB
+            # mais on avertit l'utilisateur
+            return Response(
+                {
+                    'warning': True,
+                    'message': f"La réplication a été supprimée de la base de données, mais la VM n'a pas pu être supprimée du serveur de destination: {delete_result['message']}"
+                },
+                status=status.HTTP_200_OK
+            )
+
+        logger.info(f"[REPLICATION DELETE] VM supprimée avec succès: {delete_result['message']}")
+
+        # Supprimer l'entrée de la base de données
+        response = super().destroy(request, *args, **kwargs)
+
+        logger.info(f"[REPLICATION DELETE] Réplication {replication.name} supprimée de la base de données")
+
+        return Response(
+            {
+                'success': True,
+                'message': f'Réplication supprimée. {delete_result["message"]}'
+            },
+            status=status.HTTP_200_OK
+        )
+
 
 class FailoverEventViewSet(viewsets.ReadOnlyModelViewSet):
     """Historique des événements de failover"""
