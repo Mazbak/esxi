@@ -586,6 +586,137 @@
         </div>
       </div>
     </div>
+
+    <!-- Snapshot Warning Modal - Modern Design -->
+    <div v-if="showSnapshotModal" class="fixed inset-0 bg-gradient-to-br from-gray-900/90 via-purple-900/80 to-blue-900/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden transform transition-all animate-slide-up">
+        <!-- Header avec gradient -->
+        <div class="relative px-8 py-6 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 overflow-hidden">
+          <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDEwIEwgNDAgMTAgTSAxMCAwIEwgMTAgNDAgTSAwIDIwIEwgNDAgMjAgTSAyMCAwIEwgMjAgNDAgTSAwIDMwIEwgNDAgMzAgTSAzMCAwIEwgMzAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-20"></div>
+          <div class="relative flex items-center gap-4">
+            <div class="p-4 bg-white/20 backdrop-blur-sm rounded-2xl">
+              <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div>
+              <h3 class="text-2xl font-bold text-white">🚫 Snapshots Détectés</h3>
+              <p class="text-orange-100 text-sm mt-1">La réplication ne peut pas continuer</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content -->
+        <div class="px-8 py-6 space-y-6">
+          <!-- Explication du problème -->
+          <div class="bg-gradient-to-br from-orange-50 to-red-50 border-2 border-orange-200 rounded-2xl p-6">
+            <div class="flex gap-4">
+              <div class="flex-shrink-0">
+                <div class="w-12 h-12 bg-gradient-to-br from-orange-400 to-red-500 rounded-xl flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div class="flex-1">
+                <h4 class="text-lg font-bold text-gray-900 mb-2">Pourquoi ce problème ?</h4>
+                <p class="text-gray-700 leading-relaxed">
+                  La machine virtuelle <strong class="text-orange-600">{{ snapshotModalData.vmName }}</strong>
+                  possède <strong class="text-red-600">{{ snapshotModalData.snapshotCount }} snapshot(s)</strong>.
+                </p>
+                <p class="text-gray-600 mt-3 text-sm">
+                  📸 Les snapshots empêchent l'export OVF nécessaire pour la réplication.
+                  VMware ne permet pas d'exporter une VM avec des snapshots actifs car ils créent des fichiers delta complexes.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Solution -->
+          <div class="bg-gradient-to-br from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-2xl p-6">
+            <div class="flex gap-4">
+              <div class="flex-shrink-0">
+                <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-cyan-500 rounded-xl flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div class="flex-1">
+                <h4 class="text-lg font-bold text-gray-900 mb-2">✨ Solution automatique</h4>
+                <p class="text-gray-700 leading-relaxed">
+                  Je peux supprimer automatiquement tous les snapshots pour vous.
+                  Cette opération :
+                </p>
+                <ul class="mt-3 space-y-2 text-sm text-gray-600">
+                  <li class="flex items-start gap-2">
+                    <svg class="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span>Consolide tous les snapshots en un seul disque</span>
+                  </li>
+                  <li class="flex items-start gap-2">
+                    <svg class="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span>Libère de l'espace disque</span>
+                  </li>
+                  <li class="flex items-start gap-2">
+                    <svg class="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span>Relance automatiquement la réplication après</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Warning -->
+          <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-lg">
+            <div class="flex gap-3">
+              <svg class="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+              <p class="text-sm text-yellow-800">
+                <strong>Important :</strong> Une fois supprimés, les snapshots ne pourront pas être restaurés.
+                Assurez-vous de ne pas avoir besoin de revenir à un état antérieur.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="px-8 py-6 bg-gradient-to-r from-gray-50 to-gray-100 border-t border-gray-200 flex justify-between items-center">
+          <button
+            @click="showSnapshotModal = false"
+            :disabled="snapshotModalData.removing"
+            class="px-6 py-3 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-white hover:border-gray-400 hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Annuler
+          </button>
+          <button
+            @click="removeSnapshotsAndRetry"
+            :disabled="snapshotModalData.removing"
+            class="px-8 py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white font-bold rounded-xl hover:from-red-600 hover:to-pink-600 hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-3"
+          >
+            <svg v-if="!snapshotModalData.removing" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <svg v-else class="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>
+              {{ snapshotModalData.removing ? 'Suppression en cours...' : 'Supprimer les Snapshots' }}
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -612,6 +743,16 @@ const editingReplication = ref(null)
 const selectedReplication = ref(null)
 const failoverReason = ref('')
 const failoverTestMode = ref(false)
+
+// Snapshot Modal
+const showSnapshotModal = ref(false)
+const snapshotModalData = ref({
+  vmId: null,
+  vmName: '',
+  snapshotCount: 0,
+  replicationId: null,
+  removing: false
+})
 
 // Progress tracking
 const replicationProgress = ref(0)
@@ -876,7 +1017,26 @@ async function startReplication(replication) {
               replicationStatus.value = ''
               replicationMessage.value = ''
             } else if (progressData.status === 'error') {
-              toast.error(progressData.message || 'La réplication a échoué')
+              // Détecter l'erreur de snapshot
+              const errorMessage = progressData.message || ''
+              if (errorMessage.includes('snapshot')) {
+                // Extraire le nombre de snapshots si possible
+                const snapshotMatch = errorMessage.match(/(\d+)\s+snapshot/)
+                const snapshotCount = snapshotMatch ? parseInt(snapshotMatch[1]) : 0
+
+                // Afficher le modal de gestion des snapshots
+                snapshotModalData.value = {
+                  vmId: replication.virtual_machine,
+                  vmName: replication.vm_name,
+                  snapshotCount: snapshotCount,
+                  replicationId: replication.id,
+                  removing: false
+                }
+                showSnapshotModal.value = true
+              } else {
+                toast.error(errorMessage || 'La réplication a échoué')
+              }
+
               replicationProgress.value = 0
               replicationStatus.value = ''
               replicationMessage.value = ''
@@ -905,6 +1065,39 @@ async function startReplication(replication) {
     replicationProgress.value = 0
     replicationStatus.value = ''
     replicationMessage.value = ''
+  }
+}
+
+// Fonction pour supprimer les snapshots et réessayer la réplication
+async function removeSnapshotsAndRetry() {
+  snapshotModalData.value.removing = true
+
+  try {
+    // Appeler l'API pour supprimer les snapshots
+    const response = await virtualMachinesAPI.removeAllSnapshots(snapshotModalData.value.vmId)
+
+    if (response.data.success) {
+      toast.success(`${response.data.snapshots_removed} snapshot(s) supprimé(s)`, { duration: 5000 })
+
+      // Fermer le modal
+      showSnapshotModal.value = false
+
+      // Attendre 2 secondes puis relancer la réplication automatiquement
+      setTimeout(() => {
+        const replication = replications.value.find(r => r.id === snapshotModalData.value.replicationId)
+        if (replication) {
+          startReplication(replication)
+        }
+      }, 2000)
+    } else {
+      toast.error(`Échec: ${response.data.message}`)
+    }
+  } catch (error) {
+    console.error('Erreur suppression snapshots:', error)
+    const errorMsg = error.response?.data?.error || 'Impossible de supprimer les snapshots'
+    toast.error(errorMsg)
+  } finally {
+    snapshotModalData.value.removing = false
   }
 }
 
