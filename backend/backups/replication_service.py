@@ -347,6 +347,34 @@ class ReplicationService:
 
         logger.info(f"[REPLICATION] Début export OVF de {vm_name}")
 
+        # VÉRIFICATION CRITIQUE: Détecter les conditions qui empêchent l'export
+        # 1. Vérifier les snapshots
+        if vm_obj.snapshot is not None:
+            snapshot_count = len(vm_obj.snapshot.rootSnapshotList)
+            error_msg = (
+                f"La VM '{vm_name}' possède {snapshot_count} snapshot(s). "
+                f"L'export OVF nécessite de supprimer tous les snapshots. "
+                f"Veuillez supprimer les snapshots depuis l'interface ESXi avant de répliquer."
+            )
+            logger.error(f"[REPLICATION] {error_msg}")
+            raise Exception(error_msg)
+
+        # 2. Vérifier les disques indépendants
+        for device in vm_obj.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualDisk):
+                backing = device.backing
+                if hasattr(backing, 'diskMode'):
+                    if 'independent' in backing.diskMode.lower():
+                        error_msg = (
+                            f"La VM '{vm_name}' possède des disques en mode 'indépendant'. "
+                            f"Les disques indépendants ne peuvent pas être exportés en OVF. "
+                            f"Veuillez convertir les disques en mode 'dépendant' depuis l'interface ESXi."
+                        )
+                        logger.error(f"[REPLICATION] {error_msg}")
+                        raise Exception(error_msg)
+
+        logger.info(f"[REPLICATION] Vérifications pré-export réussies pour {vm_name}")
+
         # Créer un lease d'export
         lease = vm_obj.ExportVm()
 
