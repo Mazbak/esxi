@@ -277,6 +277,7 @@ export const vmReplicationsAPI = {
   startReplication: (id) => apiClient.post(`/vm-replications/${id}/start_replication/`),
   getReplicationProgress: (replicationId) => apiClient.get(`/vm-replications/replication-progress/${replicationId}/`),
   cancelReplication: (replicationId) => apiClient.post(`/vm-replications/cancel-replication/${replicationId}/`),
+  checkReplicaExists: (id) => apiClient.get(`/vm-replications/${id}/check_replica_exists/`),
   performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/trigger_failover/`, data),
 }
 
