@@ -4,7 +4,8 @@ from backups.models import (
     BackupConfiguration, BackupJob, BackupSchedule,
     SnapshotSchedule, Snapshot, RemoteStorageConfig,
     OVFExportJob, VMBackupJob, StoragePath,
-    VMReplication, FailoverEvent, BackupVerification, BackupVerificationSchedule
+    VMReplication, FailoverEvent, ReplicationLog,
+    BackupVerification, BackupVerificationSchedule
 )
 
 class ESXiServerSerializer(serializers.ModelSerializer):
@@ -464,12 +465,12 @@ class VMReplicationSerializer(serializers.ModelSerializer):
 
 class FailoverEventSerializer(serializers.ModelSerializer):
     """Serializer pour les événements de failover"""
-    
+
     vm_name = serializers.CharField(source='replication.virtual_machine.name', read_only=True)
     triggered_by_username = serializers.CharField(source='triggered_by.username', read_only=True)
     failover_type_display = serializers.CharField(source='get_failover_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    
+
     class Meta:
         model = FailoverEvent
         fields = [
@@ -479,6 +480,24 @@ class FailoverEventSerializer(serializers.ModelSerializer):
             'error_message', 'started_at', 'completed_at'
         ]
         read_only_fields = ['started_at', 'completed_at']
+
+
+class ReplicationLogSerializer(serializers.ModelSerializer):
+    """Serializer pour l'historique des réplications"""
+
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    vm_name = serializers.CharField(source='replication.virtual_machine.name', read_only=True)
+    replication_name = serializers.CharField(source='replication.name', read_only=True)
+
+    class Meta:
+        model = ReplicationLog
+        fields = [
+            'id', 'replication', 'vm_name', 'replication_name',
+            'status', 'status_display', 'started_at', 'completed_at',
+            'duration_seconds', 'progress_percentage', 'replicated_size_mb',
+            'message', 'error_details', 'source_vm_power_state', 'triggered_by'
+        ]
+        read_only_fields = ['started_at', 'completed_at', 'duration_seconds']
 
 
 # ==========================================================

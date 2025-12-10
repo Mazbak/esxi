@@ -1358,6 +1358,91 @@ class FailoverEvent(models.Model):
         return f"Failover {self.failover_type}: {self.replication.virtual_machine.name} ({self.status})"
 
 
+class ReplicationLog(models.Model):
+    """
+    Historique des tentatives de réplication
+    Permet de suivre chaque synchronisation avec son statut et sa durée
+    """
+    STATUS_CHOICES = [
+        ('started', 'Démarré'),
+        ('in_progress', 'En cours'),
+        ('completed', 'Terminé'),
+        ('failed', 'Échoué'),
+        ('cancelled', 'Annulé')
+    ]
+
+    replication = models.ForeignKey(
+        VMReplication,
+        on_delete=models.CASCADE,
+        related_name='replication_logs',
+        help_text="Réplication associée"
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='started'
+    )
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    duration_seconds = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Durée de la réplication en secondes"
+    )
+
+    progress_percentage = models.IntegerField(default=0)
+
+    replicated_size_mb = models.FloatField(
+        default=0,
+        help_text="Taille répliquée en MB"
+    )
+
+    message = models.TextField(
+        blank=True,
+        help_text="Message de status ou d'erreur"
+    )
+
+    error_details = models.TextField(
+        blank=True,
+        help_text="Détails de l'erreur si échec"
+    )
+
+    # Info technique
+    source_vm_power_state = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="État de la VM source au moment de la réplication"
+    )
+
+    triggered_by = models.CharField(
+        max_length=50,
+        default='automatic',
+        help_text="Comment la réplication a été déclenchée (automatic, manual, api)"
+    )
+
+    class Meta:
+        verbose_name = "Historique Réplication"
+        verbose_name_plural = "Historique Réplications"
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['replication', '-started_at']),
+            models.Index(fields=['status', '-started_at']),
+        ]
+
+    def __str__(self):
+        return f"Replication Log: {self.replication.name} - {self.status} ({self.started_at})"
+
+    def calculate_duration(self):
+        """Calculer et sauvegarder la durée"""
+        if self.started_at and self.completed_at:
+            delta = self.completed_at - self.started_at
+            self.duration_seconds = int(delta.total_seconds())
+            return self.duration_seconds
+        return None
+
+
 # ==========================================================
 # 🔹 SUREBACKUP - Vérification automatique des sauvegardes
 # ==========================================================
