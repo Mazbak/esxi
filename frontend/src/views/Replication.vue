@@ -681,7 +681,7 @@ async function fetchData() {
     esxiServers.value = serversRes.data.results || serversRes.data
   } catch (error) {
     console.error('Erreur chargement données:', error)
-    toast.error('Erreur lors du chargement des données')
+    toast.error('Impossible de charger les données')
   } finally {
     loading.value = false
   }
@@ -701,7 +701,7 @@ async function fetchDatastores(serverId) {
     form.value.destination_datastore = ''
   } catch (error) {
     console.error('Erreur chargement datastores:', error)
-    toast.error('Erreur lors du chargement des datastores')
+    toast.error('Impossible de charger les datastores')
     destinationDatastores.value = []
   } finally {
     loadingDatastores.value = false
@@ -723,7 +723,7 @@ async function saveReplication() {
     if (editingReplication.value) {
       // Mode édition
       await vmReplicationsAPI.update(editingReplication.value.id, form.value)
-      toast.success('Réplication mise à jour avec succès')
+      toast.success('Réplication mise à jour')
     } else {
       // Mode création - Vérifier si une réplication existe déjà
       const existingReplication = replications.value.find(
@@ -734,19 +734,18 @@ async function saveReplication() {
       if (existingReplication) {
         // Une réplication existe déjà pour cette VM vers ce serveur
         const vmName = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)?.name || 'cette VM'
-        const serverName = servers.value.find(s => s.id === form.value.destination_server)?.name || 'ce serveur'
+        const serverName = esxiServers.value.find(s => s.id === form.value.destination_server)?.name || 'ce serveur'
 
         toast.error(
-          `Une réplication existe déjà pour ${vmName} vers ${serverName}. ` +
-          `Veuillez éditer la réplication existante ou choisir un autre serveur de destination.`,
-          { duration: 6000 }
+          `Erreur, ${vmName} est déjà répliquée sur ${serverName}`,
+          { duration: 5000 }
         )
         return
       }
 
       // Créer la nouvelle réplication
       await vmReplicationsAPI.create(form.value)
-      toast.success('Réplication créée avec succès')
+      toast.success('Réplication créée')
     }
     closeModal()
     fetchData()
@@ -766,12 +765,11 @@ async function saveReplication() {
 
         if (uniqueError) {
           const vmName = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)?.name || 'cette VM'
-          const serverName = servers.value.find(s => s.id === form.value.destination_server)?.name || 'ce serveur'
+          const serverName = esxiServers.value.find(s => s.id === form.value.destination_server)?.name || 'ce serveur'
 
           toast.error(
-            `⚠️ Une réplication existe déjà pour ${vmName} vers ${serverName}. ` +
-            `Veuillez éditer la réplication existante ou choisir un autre serveur de destination.`,
-            { duration: 6000 }
+            `Erreur, ${vmName} est déjà répliquée sur ${serverName}`,
+            { duration: 5000 }
           )
           return
         }
@@ -779,23 +777,23 @@ async function saveReplication() {
 
       // Autres erreurs de validation
       if (errors.destination_datastore) {
-        toast.error(`Erreur datastore: ${errors.destination_datastore[0]}`)
+        toast.error(`Datastore invalide: ${errors.destination_datastore[0]}`)
         return
       }
 
       if (errors.virtual_machine) {
-        toast.error(`Erreur VM: ${errors.virtual_machine[0]}`)
+        toast.error(`Machine virtuelle invalide: ${errors.virtual_machine[0]}`)
         return
       }
 
       if (errors.destination_server) {
-        toast.error(`Erreur serveur destination: ${errors.destination_server[0]}`)
+        toast.error(`Serveur de destination invalide: ${errors.destination_server[0]}`)
         return
       }
     }
 
     // Erreur générique
-    toast.error('Erreur lors de la sauvegarde de la réplication')
+    toast.error('Erreur, la VM sélectionnée est déjà répliquée sur ce serveur')
   } finally {
     saving.value = false
   }
@@ -825,7 +823,7 @@ function closeModal() {
 let pollInterval = null // Stocker l'intervalle de polling
 
 async function startReplication(replication) {
-  if (!confirm(`Démarrer la réplication de ${replication.vm_name} ?`)) return
+  if (!confirm(`Voulez-vous démarrer la réplication de ${replication.vm_name} ?`)) return
 
   replicatingId.value = replication.id
   replicationProgress.value = 0
@@ -840,7 +838,7 @@ async function startReplication(replication) {
     if (response.data.warning) {
       toast.warning(response.data.message)
     } else {
-      toast.success(response.data.message || 'Réplication démarrée avec succès')
+      toast.success(response.data.message || 'Réplication démarrée')
     }
 
     // Si on a un replication_id, démarrer le polling de la progression
@@ -865,7 +863,7 @@ async function startReplication(replication) {
             currentReplicationId.value = null
 
             if (progressData.status === 'completed') {
-              toast.success('Réplication terminée avec succès')
+              toast.success('Réplication terminée')
               // Réinitialiser les valeurs de progression après 3 secondes
               setTimeout(() => {
                 replicationProgress.value = 0
@@ -873,12 +871,12 @@ async function startReplication(replication) {
                 replicationMessage.value = ''
               }, 3000)
             } else if (progressData.status === 'cancelled') {
-              toast.info('Réplication annulée')
+              toast.info('Réplication annulée par l\'utilisateur')
               replicationProgress.value = 0
               replicationStatus.value = ''
               replicationMessage.value = ''
             } else if (progressData.status === 'error') {
-              toast.error(progressData.message || 'Erreur lors de la réplication')
+              toast.error(progressData.message || 'La réplication a échoué')
               replicationProgress.value = 0
               replicationStatus.value = ''
               replicationMessage.value = ''
@@ -901,7 +899,7 @@ async function startReplication(replication) {
     fetchData()
   } catch (error) {
     console.error('Erreur démarrage réplication:', error)
-    const errorMsg = error.response?.data?.error || 'Erreur lors du démarrage de la réplication'
+    const errorMsg = error.response?.data?.error || 'Impossible de démarrer la réplication'
     toast.error(errorMsg)
     replicatingId.value = null
     replicationProgress.value = 0
@@ -912,15 +910,15 @@ async function startReplication(replication) {
 
 async function cancelReplication() {
   if (!currentReplicationId.value) {
-    toast.error('Aucune réplication en cours')
+    toast.error('Aucune réplication n\'est en cours')
     return
   }
 
-  if (!confirm('Êtes-vous sûr de vouloir arrêter cette réplication ?')) return
+  if (!confirm('Voulez-vous vraiment arrêter cette réplication ?')) return
 
   try {
     await vmReplicationsAPI.cancelReplication(currentReplicationId.value)
-    toast.info('Demande d\'arrêt envoyée...')
+    toast.info('Arrêt de la réplication en cours...')
 
     // Arrêter le polling
     if (pollInterval) {
@@ -936,7 +934,7 @@ async function cancelReplication() {
     replicationMessage.value = ''
   } catch (error) {
     console.error('Erreur arrêt réplication:', error)
-    toast.error('Erreur lors de l\'arrêt de la réplication')
+    toast.error('Impossible d\'arrêter la réplication')
   }
 }
 
@@ -954,27 +952,38 @@ async function performFailover() {
       reason: failoverReason.value,
       test_mode: failoverTestMode.value
     })
-    toast.success('Failover déclenché avec succès')
+    toast.success('Basculement vers le serveur de secours effectué')
     showFailoverConfirmModal.value = false
     fetchData()
   } catch (error) {
     console.error('Erreur failover:', error)
-    toast.error('Erreur lors du failover')
+    toast.error('Le basculement a échoué')
   } finally {
     saving.value = false
   }
 }
 
 async function deleteReplication(replication) {
-  if (!confirm(`Supprimer la réplication "${replication.name}" ?`)) return
+  if (!confirm(
+    `Voulez-vous vraiment supprimer la réplication "${replication.name}" ?\n\n` +
+    `⚠️ La VM répliquée sera également supprimée du serveur de destination ${replication.destination_server_name}.`
+  )) return
 
   try {
-    await vmReplicationsAPI.delete(replication.id)
-    toast.success('Réplication supprimée')
+    const response = await vmReplicationsAPI.delete(replication.id)
+
+    // Gérer les avertissements (si la VM n'a pas pu être supprimée du serveur)
+    if (response.data?.warning) {
+      toast.warning(response.data.message, { duration: 8000 })
+    } else {
+      toast.success('Réplication et VM répliquée supprimées')
+    }
+
     fetchData()
   } catch (error) {
     console.error('Erreur suppression:', error)
-    toast.error('Erreur lors de la suppression')
+    const errorMsg = error.response?.data?.message || 'Impossible de supprimer la réplication'
+    toast.error(errorMsg, { duration: 6000 })
   }
 }
 
