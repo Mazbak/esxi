@@ -278,6 +278,8 @@ export const vmReplicationsAPI = {
   getReplicationProgress: (replicationId) => apiClient.get(`/vm-replications/replication-progress/${replicationId}/`),
   cancelReplication: (replicationId) => apiClient.post(`/vm-replications/cancel-replication/${replicationId}/`),
   checkReplicaExists: (id) => apiClient.get(`/vm-replications/${id}/check_replica_exists/`),
+  getReplicationHistory: (id, limit = 20) => apiClient.get(`/vm-replications/${id}/replication_history/`, { params: { limit } }),
+  getVMStates: (id) => apiClient.get(`/vm-replications/${id}/vm_states/`),
   performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/trigger_failover/`, data),
 }
 

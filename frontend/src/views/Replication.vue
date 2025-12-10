@@ -156,92 +156,232 @@
         <table class="min-w-full divide-y divide-gray-200">
           <thead>
             <tr>
-              <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">VM</th>
-              <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source → Destination</th>
-              <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Intervalle</th>
-              <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
-              <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dernière Réplication</th>
-              <th class="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-8"></th>
+              <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">VM</th>
+              <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Master ⇄ Slave</th>
+              <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Info Synchronisation</th>
+              <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Statut</th>
+              <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
-            <tr v-for="replication in replications" :key="replication.id" class="hover:bg-gray-50">
-              <td class="px-6 py-4 whitespace-nowrap">
-                <div class="text-sm font-medium text-gray-900">{{ replication.vm_name }}</div>
-                <div class="text-sm text-gray-500">{{ replication.name }}</div>
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                <div class="text-sm text-gray-900">
-                  {{ replication.source_server_name }} → {{ replication.destination_server_name }}
-                </div>
-                <div class="text-sm text-gray-500">{{ replication.destination_datastore }}</div>
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {{ replication.replication_interval_minutes }} min
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                <span :class="getStatusClass(replication.status)" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
-                  {{ replication.status_display }}
-                </span>
-                <div v-if="replication.failover_mode === 'automatic'" class="mt-1">
-                  <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                    Auto-Failover
+            <template v-for="replication in replications" :key="replication.id">
+              <!-- Main Row -->
+              <tr class="hover:bg-gray-50 transition-colors">
+                <!-- Expand Button -->
+                <td class="px-4 py-4 whitespace-nowrap text-center">
+                  <button
+                    @click="toggleRowExpansion(replication.id)"
+                    class="text-gray-400 hover:text-gray-600 focus:outline-none"
+                    title="Voir l'historique"
+                  >
+                    <svg class="w-5 h-5 transition-transform" :class="{'rotate-90': expandedRows.has(replication.id)}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </td>
+
+                <!-- VM Info -->
+                <td class="px-4 py-4 whitespace-nowrap">
+                  <div class="text-sm font-medium text-gray-900">{{ replication.vm_name }}</div>
+                  <div class="text-sm text-gray-500">{{ replication.name }}</div>
+                  <div class="text-xs text-gray-400 mt-1">{{ replication.replication_interval_minutes }} min</div>
+                </td>
+
+                <!-- Master/Slave States -->
+                <td class="px-4 py-4">
+                  <div v-if="vmStates[replication.id]" class="space-y-2">
+                    <!-- Master (Source) -->
+                    <div class="flex items-center gap-2 text-sm">
+                      <span class="font-medium text-blue-600">🖥️ Master:</span>
+                      <span class="text-gray-700">{{ replication.source_server_name }}</span>
+                      <span v-if="vmStates[replication.id].source_vm">
+                        {{ getPowerStateIcon(vmStates[replication.id].source_vm.power_state) }}
+                        <span class="text-xs text-gray-500">
+                          {{ getPowerStateText(vmStates[replication.id].source_vm.power_state) }}
+                        </span>
+                      </span>
+                    </div>
+                    <!-- Slave (Destination) -->
+                    <div class="flex items-center gap-2 text-sm">
+                      <span class="font-medium text-purple-600">🔄 Slave:</span>
+                      <span class="text-gray-700">{{ replication.destination_server_name }}</span>
+                      <span v-if="vmStates[replication.id].destination_vm && vmStates[replication.id].destination_vm.exists">
+                        {{ getPowerStateIcon(vmStates[replication.id].destination_vm.power_state) }}
+                        <span class="text-xs text-gray-500">
+                          {{ getPowerStateText(vmStates[replication.id].destination_vm.power_state) }}
+                        </span>
+                      </span>
+                      <span v-else class="text-xs text-orange-500">⚠️ Pas encore répliquée</span>
+                    </div>
+                    <div class="text-xs text-gray-400">{{ replication.destination_datastore }}</div>
+                  </div>
+                  <div v-else class="flex items-center gap-2 text-sm text-gray-400">
+                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Chargement états...
+                  </div>
+                </td>
+
+                <!-- Sync Info -->
+                <td class="px-4 py-4">
+                  <div class="space-y-1">
+                    <!-- Last Sync -->
+                    <div class="flex items-center gap-2 text-xs">
+                      <span class="text-gray-500">Dernier sync:</span>
+                      <span class="font-medium text-gray-700">{{ formatRelativeTime(replication.last_replication_at) }}</span>
+                    </div>
+                    <!-- Next Sync -->
+                    <div v-if="replication.is_active && vmStates[replication.id]?.sync_info" class="flex items-center gap-2 text-xs">
+                      <span class="text-gray-500">Prochain sync:</span>
+                      <span v-if="vmStates[replication.id].sync_info.time_to_next_sync_minutes !== null" class="font-medium" :class="vmStates[replication.id].sync_info.time_to_next_sync_minutes <= 5 ? 'text-green-600' : 'text-gray-700'">
+                        {{ vmStates[replication.id].sync_info.time_to_next_sync_minutes > 0 ? `Dans ${vmStates[replication.id].sync_info.time_to_next_sync_minutes} min` : 'Imminent' }}
+                      </span>
+                      <span v-else class="text-orange-500">Première sync en attente</span>
+                    </div>
+                    <div v-else-if="!replication.is_active" class="text-xs text-gray-400">
+                      ⏸️ Désactivée
+                    </div>
+                    <!-- Duration if available -->
+                    <div v-if="replication.last_replication_duration_seconds" class="text-xs text-gray-400">
+                      ⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}
+                    </div>
+                  </div>
+                </td>
+
+                <!-- Status -->
+                <td class="px-4 py-4 whitespace-nowrap">
+                  <span :class="getStatusClass(replication.status)" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
+                    {{ replication.status_display }}
                   </span>
-                </div>
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                <div v-if="replication.last_replication_at">
-                  {{ formatDateTime(replication.last_replication_at) }}
-                </div>
-                <div v-else class="text-gray-400">Jamais</div>
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                <button
-                  @click="startReplication(replication)"
-                  :disabled="!replication.is_active || replicatingId === replication.id"
-                  class="text-blue-600 hover:text-blue-900 disabled:text-gray-400 transition-all relative"
-                  :class="{'animate-pulse': replicatingId === replication.id}"
-                  title="Démarrer la réplication"
-                >
-                  <svg v-if="replicatingId === replication.id" class="w-5 h-5 inline animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <svg v-else class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </button>
-                <button
-                  @click="showFailoverModal(replication)"
-                  :disabled="!replication.is_active"
-                  class="text-orange-600 hover:text-orange-900 disabled:text-gray-400"
-                  title="Failover manuel"
-                >
-                  <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </button>
-                <button
-                  @click="editReplication(replication)"
-                  class="text-indigo-600 hover:text-indigo-900"
-                  title="Modifier"
-                >
-                  <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </button>
-                <button
-                  @click="deleteReplication(replication)"
-                  class="text-red-600 hover:text-red-900"
-                  title="Supprimer"
-                >
-                  <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </td>
-            </tr>
+                  <div v-if="replication.failover_mode === 'automatic'" class="mt-1">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                      Auto-Failover
+                    </span>
+                  </div>
+                </td>
+
+                <!-- Actions -->
+                <td class="px-4 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                  <button
+                    @click="startReplication(replication)"
+                    :disabled="!replication.is_active || replicatingId === replication.id"
+                    class="text-blue-600 hover:text-blue-900 disabled:text-gray-400 transition-all relative"
+                    :class="{'animate-pulse': replicatingId === replication.id}"
+                    title="Démarrer la réplication"
+                  >
+                    <svg v-if="replicatingId === replication.id" class="w-5 h-5 inline animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <svg v-else class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                  <button
+                    @click="showFailoverModal(replication)"
+                    :disabled="!replication.is_active"
+                    class="text-orange-600 hover:text-orange-900 disabled:text-gray-400"
+                    title="Failover manuel"
+                  >
+                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </button>
+                  <button
+                    @click="editReplication(replication)"
+                    class="text-indigo-600 hover:text-indigo-900"
+                    title="Modifier"
+                  >
+                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    @click="deleteReplication(replication)"
+                    class="text-red-600 hover:text-red-900"
+                    title="Supprimer"
+                  >
+                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+
+              <!-- Expandable History Row -->
+              <tr v-if="expandedRows.has(replication.id)" class="bg-gray-50">
+                <td colspan="6" class="px-4 py-4">
+                  <div class="bg-white rounded-lg shadow p-4 border border-gray-200">
+                    <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Historique des réplications
+                    </h4>
+
+                    <!-- Loading State -->
+                    <div v-if="loadingHistory.has(replication.id)" class="flex items-center justify-center py-4 text-gray-400">
+                      <svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Chargement de l'historique...
+                    </div>
+
+                    <!-- History Table -->
+                    <div v-else-if="replicationHistory[replication.id] && replicationHistory[replication.id].length > 0" class="overflow-x-auto">
+                      <table class="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead class="bg-gray-100">
+                          <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date/Heure</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Statut</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Durée</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Taille</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Message</th>
+                          </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-100">
+                          <tr v-for="log in replicationHistory[replication.id]" :key="log.id" class="hover:bg-gray-50">
+                            <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-600">
+                              {{ formatDateTime(log.started_at) }}
+                            </td>
+                            <td class="px-3 py-2 whitespace-nowrap">
+                              <span :class="getStatusClass(log.status)" class="px-2 py-1 text-xs font-semibold rounded">
+                                {{ log.status_display }}
+                              </span>
+                            </td>
+                            <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-600">
+                              {{ formatDuration(log.duration_seconds) }}
+                            </td>
+                            <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-600">
+                              {{ log.replicated_size_mb > 0 ? `${log.replicated_size_mb.toFixed(0)} MB` : '-' }}
+                            </td>
+                            <td class="px-3 py-2 whitespace-nowrap text-xs">
+                              <span :class="log.triggered_by === 'automatic' ? 'text-blue-600' : 'text-purple-600'">
+                                {{ log.triggered_by === 'automatic' ? '🤖 Auto' : '👤 Manuel' }}
+                              </span>
+                            </td>
+                            <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate" :title="log.message">
+                              {{ log.message || '-' }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div v-else class="text-center py-4 text-gray-400 text-sm">
+                      📋 Aucun historique de réplication disponible
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -1045,6 +1185,13 @@ const replicationStatus = ref('')
 const replicationMessage = ref('')
 const currentReplicationId = ref(null)
 
+// VM States and History
+const vmStates = ref({}) // { replicationId: { source_vm, destination_vm, sync_info } }
+const expandedRows = ref(new Set()) // Set of expanded replication IDs
+const replicationHistory = ref({}) // { replicationId: [...logs] }
+const loadingStates = ref(new Set()) // Set of replication IDs being loaded
+const loadingHistory = ref(new Set()) // Set of replication IDs with history being loaded
+
 const form = ref({
   name: '',
   virtual_machine: '',
@@ -1126,12 +1273,103 @@ async function fetchData() {
     failoverEvents.value = failoverRes.data.results || failoverRes.data
     virtualMachines.value = vmsRes.data.results || vmsRes.data
     esxiServers.value = serversRes.data.results || serversRes.data
+
+    // Fetch VM states for all active replications
+    await fetchAllVMStates()
   } catch (error) {
     console.error('Erreur chargement données:', error)
     toast.error('Impossible de charger les données')
   } finally {
     loading.value = false
   }
+}
+
+async function fetchAllVMStates() {
+  // Fetch VM states for all replications in parallel
+  const promises = replications.value.map(replication => fetchVMStates(replication.id))
+  await Promise.allSettled(promises)
+}
+
+async function fetchVMStates(replicationId) {
+  loadingStates.value.add(replicationId)
+  try {
+    const response = await vmReplicationsAPI.getVMStates(replicationId)
+    vmStates.value[replicationId] = response.data
+  } catch (error) {
+    console.error(`Erreur récupération états VM pour réplication ${replicationId}:`, error)
+    // Don't show error toast for each replication, just log it
+  } finally {
+    loadingStates.value.delete(replicationId)
+  }
+}
+
+async function toggleRowExpansion(replicationId) {
+  if (expandedRows.value.has(replicationId)) {
+    expandedRows.value.delete(replicationId)
+  } else {
+    expandedRows.value.add(replicationId)
+    // Load history if not already loaded
+    if (!replicationHistory.value[replicationId]) {
+      await fetchReplicationHistory(replicationId)
+    }
+  }
+  // Force reactivity
+  expandedRows.value = new Set(expandedRows.value)
+}
+
+async function fetchReplicationHistory(replicationId, limit = 20) {
+  loadingHistory.value.add(replicationId)
+  try {
+    const response = await vmReplicationsAPI.getReplicationHistory(replicationId, limit)
+    replicationHistory.value[replicationId] = response.data
+  } catch (error) {
+    console.error(`Erreur récupération historique pour réplication ${replicationId}:`, error)
+    toast.error('Impossible de charger l\'historique de réplication')
+  } finally {
+    loadingHistory.value.delete(replicationId)
+  }
+}
+
+function formatRelativeTime(dateString) {
+  if (!dateString) return 'Jamais'
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now - date
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMins / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffMins < 1) return 'À l\'instant'
+  if (diffMins < 60) return `Il y a ${diffMins} min`
+  if (diffHours < 24) return `Il y a ${diffHours}h`
+  if (diffDays < 7) return `Il y a ${diffDays}j`
+  return formatDateTime(dateString)
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return '-'
+  if (seconds < 60) return `${seconds}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}m ${secs}s`
+}
+
+function getPowerStateIcon(powerState) {
+  if (powerState === 'poweredOn') {
+    return '🟢'
+  } else if (powerState === 'poweredOff') {
+    return '🔴'
+  } else if (powerState === 'suspended') {
+    return '🟡'
+  }
+  return '⚪'
+}
+
+function getPowerStateText(powerState) {
+  if (powerState === 'poweredOn') return 'Allumée'
+  if (powerState === 'poweredOff') return 'Éteinte'
+  if (powerState === 'suspended') return 'Suspendue'
+  return 'Inconnue'
 }
 
 async function fetchDatastores(serverId) {

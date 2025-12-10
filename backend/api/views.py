@@ -40,7 +40,7 @@ from api.serializers import (
     ListFilesSerializer, SearchFilesSerializer, ValidateRestoreSerializer,
     NotificationConfigSerializer, NotificationLogSerializer, TestNotificationSerializer,
     StoragePathSerializer, VMReplicationSerializer, FailoverEventSerializer,
-    BackupVerificationSerializer, BackupVerificationScheduleSerializer,
+    ReplicationLogSerializer, BackupVerificationSerializer, BackupVerificationScheduleSerializer,
     EmailSettingsSerializer
 )
 from backups.tasks import execute_backup_job, execute_backup_verification  # Celery tasks
@@ -3092,6 +3092,95 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             logger.error(f"[CHECK-REPLICA] Erreur lors de la vérification: {e}", exc_info=True)
             return Response(
                 {'error': str(e), 'exists': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'])
+    def replication_history(self, request, pk=None):
+        """Obtenir l'historique des réplications pour une VMReplication donnée"""
+        replication = self.get_object()
+
+        # Limiter à 20 dernières réplications par défaut
+        limit = int(request.query_params.get('limit', 20))
+
+        logs = replication.replication_logs.all()[:limit]
+        serializer = ReplicationLogSerializer(logs, many=True)
+
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def vm_states(self, request, pk=None):
+        """Obtenir l'état des VMs source et destination"""
+        import logging
+        from django.utils import timezone
+        logger = logging.getLogger(__name__)
+
+        replication = self.get_object()
+
+        try:
+            from backups.replication_service import ReplicationService
+            service = ReplicationService()
+
+            # Se connecter aux serveurs
+            source_server = replication.get_source_server
+            dest_server = replication.destination_server
+
+            source_si = service._connect_to_server(source_server)
+            dest_si = service._connect_to_server(dest_server)
+
+            # Obtenir les VMs
+            vm_name = replication.virtual_machine.name
+            replica_vm_name = f"{vm_name}_replica"
+
+            source_vm = service._get_vm_by_name(source_si, vm_name)
+            dest_vm = service._get_vm_by_name(dest_si, replica_vm_name)
+
+            # États
+            source_state = source_vm.runtime.powerState if source_vm else None
+            dest_state = dest_vm.runtime.powerState if dest_vm else None
+
+            # Calculer le prochain sync
+            next_sync = None
+            if replication.is_active and replication.last_replication_at:
+                next_sync = replication.last_replication_at + timezone.timedelta(
+                    minutes=replication.replication_interval_minutes
+                )
+
+            # Calculer le temps jusqu'au prochain sync
+            time_to_next_sync = None
+            if next_sync:
+                delta = next_sync - timezone.now()
+                time_to_next_sync = int(delta.total_seconds() / 60)  # en minutes
+
+            # Déconnexion
+            from pyVim.connect import Disconnect
+            Disconnect(source_si)
+            Disconnect(dest_si)
+
+            return Response({
+                'source_vm': {
+                    'name': vm_name,
+                    'power_state': source_state,
+                    'exists': source_vm is not None
+                },
+                'destination_vm': {
+                    'name': replica_vm_name,
+                    'power_state': dest_state,
+                    'exists': dest_vm is not None
+                },
+                'sync_info': {
+                    'last_sync': replication.last_replication_at,
+                    'next_sync': next_sync,
+                    'time_to_next_sync_minutes': time_to_next_sync,
+                    'interval_minutes': replication.replication_interval_minutes,
+                    'is_active': replication.is_active
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"[VM-STATES] Erreur lors de la récupération des états: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
