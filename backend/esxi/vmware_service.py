@@ -1284,6 +1284,168 @@ class VMwareService:
                 'snapshots_removed': 0
             }
 
+    def power_off_vm(self, vm_id):
+        """
+        Éteint une VM de manière propre (soft shutdown).
+
+        Args:
+            vm_id: L'UUID de la VM
+
+        Returns:
+            dict avec 'success' (bool), 'message' (str), et 'was_powered_on' (bool)
+        """
+        try:
+            import time
+            from pyVmomi import vim
+
+            logger.info(f"[POWER] Extinction de la VM {vm_id}")
+
+            vm = self._find_vm_by_uuid(vm_id)
+            if not vm:
+                logger.error(f"[POWER] VM introuvable: {vm_id}")
+                return {
+                    'success': False,
+                    'message': f'VM {vm_id} introuvable',
+                    'was_powered_on': False
+                }
+
+            # Vérifier l'état actuel
+            power_state = vm.runtime.powerState
+            logger.info(f"[POWER] État actuel de {vm.name}: {power_state}")
+
+            if power_state == vim.VirtualMachinePowerState.poweredOff:
+                logger.info(f"[POWER] VM {vm.name} déjà éteinte")
+                return {
+                    'success': True,
+                    'message': f'La VM {vm.name} est déjà éteinte',
+                    'was_powered_on': False
+                }
+
+            # Éteindre la VM
+            logger.info(f"[POWER] Lancement de PowerOffVM_Task...")
+            task = vm.PowerOffVM_Task()
+
+            # Attendre la fin de la tâche
+            timeout = 120  # 2 minutes max
+            elapsed = 0
+
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(2)
+                elapsed += 2
+
+                if elapsed % 10 == 0:
+                    logger.info(f"[POWER] Extinction en cours... ({elapsed}s)")
+
+                if elapsed >= timeout:
+                    logger.error(f"[POWER] Timeout après {timeout}s")
+                    return {
+                        'success': False,
+                        'message': f'Timeout lors de l\'extinction de la VM (>{timeout}s)',
+                        'was_powered_on': True
+                    }
+
+            if task.info.state == vim.TaskInfo.State.success:
+                logger.info(f"[POWER] VM {vm.name} éteinte avec succès ({elapsed}s)")
+                return {
+                    'success': True,
+                    'message': f'VM {vm.name} éteinte avec succès',
+                    'was_powered_on': True
+                }
+            else:
+                error_msg = str(task.info.error) if task.info.error else 'Erreur inconnue'
+                logger.error(f"[POWER] Échec d'extinction: {error_msg}")
+                return {
+                    'success': False,
+                    'message': f'Échec de l\'extinction: {error_msg}',
+                    'was_powered_on': True
+                }
+
+        except Exception as e:
+            logger.exception(f"[POWER] Exception lors de l'extinction: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Erreur: {str(e)}',
+                'was_powered_on': False
+            }
+
+    def power_on_vm(self, vm_id):
+        """
+        Allume une VM.
+
+        Args:
+            vm_id: L'UUID de la VM
+
+        Returns:
+            dict avec 'success' (bool) et 'message' (str)
+        """
+        try:
+            import time
+            from pyVmomi import vim
+
+            logger.info(f"[POWER] Allumage de la VM {vm_id}")
+
+            vm = self._find_vm_by_uuid(vm_id)
+            if not vm:
+                logger.error(f"[POWER] VM introuvable: {vm_id}")
+                return {
+                    'success': False,
+                    'message': f'VM {vm_id} introuvable'
+                }
+
+            # Vérifier l'état actuel
+            power_state = vm.runtime.powerState
+            logger.info(f"[POWER] État actuel de {vm.name}: {power_state}")
+
+            if power_state == vim.VirtualMachinePowerState.poweredOn:
+                logger.info(f"[POWER] VM {vm.name} déjà allumée")
+                return {
+                    'success': True,
+                    'message': f'La VM {vm.name} est déjà allumée'
+                }
+
+            # Allumer la VM
+            logger.info(f"[POWER] Lancement de PowerOnVM_Task...")
+            task = vm.PowerOnVM_Task()
+
+            # Attendre la fin de la tâche
+            timeout = 120  # 2 minutes max
+            elapsed = 0
+
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(2)
+                elapsed += 2
+
+                if elapsed % 10 == 0:
+                    logger.info(f"[POWER] Allumage en cours... ({elapsed}s)")
+
+                if elapsed >= timeout:
+                    logger.error(f"[POWER] Timeout après {timeout}s")
+                    return {
+                        'success': False,
+                        'message': f'Timeout lors de l\'allumage de la VM (>{timeout}s)'
+                    }
+
+            if task.info.state == vim.TaskInfo.State.success:
+                logger.info(f"[POWER] VM {vm.name} allumée avec succès ({elapsed}s)")
+                return {
+                    'success': True,
+                    'message': f'VM {vm.name} allumée avec succès'
+                }
+            else:
+                error_msg = str(task.info.error) if task.info.error else 'Erreur inconnue'
+                logger.error(f"[POWER] Échec d'allumage: {error_msg}")
+                return {
+                    'success': False,
+                    'message': f'Échec de l\'allumage: {error_msg}'
+                }
+
+        except Exception as e:
+            logger.exception(f"[POWER] Exception lors de l'allumage: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Erreur: {str(e)}'
+            }
+
     def _find_vm_by_uuid(self, vm_uuid):
         """Trouve une VM par son UUID"""
         if not self.content:
