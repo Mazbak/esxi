@@ -1187,6 +1187,103 @@ class VMwareService:
 
         return search_snapshots(vm.snapshot.rootSnapshotList)
 
+    def remove_all_snapshots(self, vm_id):
+        """
+        Supprime TOUS les snapshots d'une VM (consolidation complète).
+        Utilisé pour préparer une VM à la réplication.
+
+        Args:
+            vm_id: L'UUID de la VM
+
+        Returns:
+            dict avec 'success' (bool), 'message' (str), et 'snapshots_removed' (int)
+        """
+        try:
+            import time
+            from pyVmomi import vim
+
+            logger.info(f"[SNAPSHOT] Suppression de tous les snapshots pour VM {vm_id}")
+
+            vm = self._find_vm_by_uuid(vm_id)
+            if not vm:
+                logger.error(f"[SNAPSHOT] VM introuvable: {vm_id}")
+                return {
+                    'success': False,
+                    'message': f'VM {vm_id} introuvable',
+                    'snapshots_removed': 0
+                }
+
+            # Vérifier s'il y a des snapshots
+            if not vm.snapshot or not vm.snapshot.rootSnapshotList:
+                logger.info(f"[SNAPSHOT] Aucun snapshot à supprimer pour {vm.name}")
+                return {
+                    'success': True,
+                    'message': f'La VM {vm.name} n\'a aucun snapshot',
+                    'snapshots_removed': 0
+                }
+
+            # Compter les snapshots
+            def count_snapshots(snapshots):
+                count = 0
+                for snapshot in snapshots:
+                    count += 1
+                    if snapshot.childSnapshotList:
+                        count += count_snapshots(snapshot.childSnapshotList)
+                return count
+
+            snapshot_count = count_snapshots(vm.snapshot.rootSnapshotList)
+            logger.info(f"[SNAPSHOT] {snapshot_count} snapshot(s) trouvé(s) sur {vm.name}")
+
+            # Supprimer tous les snapshots (RemoveAllSnapshots_Task)
+            # Cette méthode VMware consolide automatiquement tous les snapshots
+            logger.info(f"[SNAPSHOT] Lancement de RemoveAllSnapshots_Task...")
+            task = vm.RemoveAllSnapshots_Task()
+
+            # Attendre la fin de la tâche (peut prendre du temps selon la taille des snapshots)
+            logger.info(f"[SNAPSHOT] Attente de la consolidation des snapshots...")
+            timeout = 300  # 5 minutes max
+            elapsed = 0
+
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                time.sleep(2)
+                elapsed += 2
+
+                # Log progression tous les 10 secondes
+                if elapsed % 10 == 0:
+                    logger.info(f"[SNAPSHOT] Consolidation en cours... ({elapsed}s)")
+
+                if elapsed >= timeout:
+                    logger.error(f"[SNAPSHOT] Timeout après {timeout}s")
+                    return {
+                        'success': False,
+                        'message': f'Timeout lors de la suppression des snapshots (>{timeout}s)',
+                        'snapshots_removed': 0
+                    }
+
+            if task.info.state == vim.TaskInfo.State.success:
+                logger.info(f"[SNAPSHOT] Tous les snapshots supprimés avec succès pour {vm.name} ({elapsed}s)")
+                return {
+                    'success': True,
+                    'message': f'{snapshot_count} snapshot(s) supprimé(s) avec succès pour {vm.name}',
+                    'snapshots_removed': snapshot_count
+                }
+            else:
+                error_msg = str(task.info.error) if task.info.error else 'Erreur inconnue'
+                logger.error(f"[SNAPSHOT] Échec de suppression: {error_msg}")
+                return {
+                    'success': False,
+                    'message': f'Échec de suppression des snapshots: {error_msg}',
+                    'snapshots_removed': 0
+                }
+
+        except Exception as e:
+            logger.exception(f"[SNAPSHOT] Exception lors de la suppression: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Erreur: {str(e)}',
+                'snapshots_removed': 0
+            }
+
     def _find_vm_by_uuid(self, vm_uuid):
         """Trouve une VM par son UUID"""
         if not self.content:

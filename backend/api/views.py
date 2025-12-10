@@ -507,6 +507,56 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['name', 'guest_os', 'ip_address']
     ordering_fields = ['name', 'created_at', 'memory_mb', 'disk_gb']
 
+    @action(detail=True, methods=['post'])
+    def remove_all_snapshots(self, request, pk=None):
+        """
+        Supprime tous les snapshots d'une VM.
+        Utilisé pour préparer une VM à la réplication.
+        """
+        vm = self.get_object()
+        server = vm.server
+
+        try:
+            # Créer le service VMware
+            vmware = VMwareService(
+                host=server.hostname,
+                user=server.username,
+                password=server.password,
+                port=server.port or 443
+            )
+
+            # Connexion
+            if not vmware.connect():
+                return Response(
+                    {'error': f'Impossible de se connecter au serveur {server.hostname}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Supprimer tous les snapshots
+            result = vmware.remove_all_snapshots(vm.vm_id)
+
+            # Déconnexion
+            vmware.disconnect()
+
+            if result['success']:
+                return Response({
+                    'success': True,
+                    'message': result['message'],
+                    'snapshots_removed': result['snapshots_removed']
+                })
+            else:
+                return Response(
+                    {'error': result['message']},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            logger.exception(f"Erreur lors de la suppression des snapshots: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ==========================================================
 # 🔹 DATASTORES
