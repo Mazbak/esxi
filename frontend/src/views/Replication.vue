@@ -228,13 +228,16 @@
                 <!-- Sync Info -->
                 <td class="px-4 py-4">
                   <div class="space-y-1">
-                    <!-- Syncing Indicator -->
+                    <!-- Syncing Indicator with Progress -->
                     <div v-if="isSyncing(replication)" class="flex items-center gap-2 text-xs mb-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
                       <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      <span class="font-semibold text-blue-700">🔄 Synchronisation en cours...</span>
+                      <span class="font-semibold text-blue-700">
+                        🔄 Synchronisation en cours...
+                        <span class="text-blue-900 ml-1">{{ getSyncProgress(replication.id) }}%</span>
+                      </span>
                     </div>
 
                     <!-- Last Sync -->
@@ -1258,11 +1261,19 @@ onMounted(() => {
   // Restaurer les réplications en cours depuis le store après chargement
   setTimeout(() => {
     const activeReplications = operationsStore.getOperationsByType('replication')
+    console.log('[REPLICATION-RESTORE] Réplications actives trouvées:', activeReplications.length)
+
     if (activeReplications.length > 0) {
-      // Reprendre le polling pour chaque réplication active
+      // Reprendre le polling pour chaque réplication active (même si completed récemment)
       activeReplications.forEach(op => {
-        if (op.status === 'running' || op.status === 'starting' || op.status === 'in_progress') {
+        console.log('[REPLICATION-RESTORE] Tentative restauration:', op.id, 'Status:', op.status, 'Progress:', op.progress)
+
+        // Restaurer si pas completed/error/cancelled ET si progress < 100
+        if (!['completed', 'error', 'cancelled'].includes(op.status) || op.progress < 100) {
+          console.log('[REPLICATION-RESTORE] ✓ Restauration de la réplication', op.id)
           resumeReplication(op.id, op)
+        } else {
+          console.log('[REPLICATION-RESTORE] ✗ Skip (terminée ou annulée)')
         }
       })
     }
@@ -1447,6 +1458,18 @@ function getNextSyncCountdown(replication) {
 
 function isSyncing(replication) {
   return replication.status === 'syncing' || replicatingId.value === replication.id
+}
+
+function getSyncProgress(replicationId) {
+  // Si c'est la réplication en cours, retourner le progress actuel
+  if (replicatingId.value === replicationId) {
+    return replicationProgress.value
+  }
+
+  // Sinon, chercher dans operationsStore au cas où
+  const activeOps = operationsStore.getOperationsByType('replication')
+  const op = activeOps.find(o => o.id === replicationId)
+  return op?.progress || 0
 }
 
 async function fetchDatastores(serverId) {
@@ -1766,17 +1789,28 @@ async function startReplicationWithoutCheck(replication) {
 // Fonction pour reprendre une réplication en cours après rechargement de page
 function resumeReplication(replicationId, opData) {
   const replication = replications.value.find(r => r.id === replicationId)
-  if (!replication) return
+  if (!replication) {
+    console.warn('[REPLICATION-RESTORE] Réplication introuvable:', replicationId)
+    return
+  }
+
+  console.log('[REPLICATION-RESTORE] Restauration des données:', {
+    replicationId,
+    progress: opData.progress,
+    status: opData.status,
+    currentReplicationId: opData.currentReplicationId
+  })
 
   replicatingId.value = replicationId
-  replicationProgress.value = opData.progress
-  replicationStatus.value = opData.status
-  replicationMessage.value = opData.message
+  replicationProgress.value = opData.progress || 0
+  replicationStatus.value = opData.status || 'starting'
+  replicationMessage.value = opData.message || 'Synchronisation en cours...'
 
   // Relancer le polling pour suivre la progression
-  if (!currentReplicationId.value) {
-    // On utilise opData.id qui contient le UUID de la réplication en cours
+  if (!currentReplicationId.value && opData.currentReplicationId) {
+    // On utilise opData.currentReplicationId qui contient le UUID de la réplication en cours
     currentReplicationId.value = opData.currentReplicationId
+    console.log('[REPLICATION-RESTORE] Reprise du polling avec UUID:', opData.currentReplicationId)
 
     pollInterval = setInterval(async () => {
       try {
