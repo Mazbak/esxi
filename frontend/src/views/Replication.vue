@@ -1090,6 +1090,27 @@ watch(() => form.value.destination_server, async (newServerId) => {
 
 onMounted(() => {
   fetchData()
+
+  // Restaurer les réplications en cours depuis le store après chargement
+  setTimeout(() => {
+    const activeReplications = operationsStore.getOperationsByType('replication')
+    if (activeReplications.length > 0) {
+      // Reprendre le polling pour chaque réplication active
+      activeReplications.forEach(op => {
+        if (op.status === 'running' || op.status === 'starting' || op.status === 'in_progress') {
+          resumeReplication(op.id, op)
+        }
+      })
+    }
+  }, 500) // Attendre que les données soient chargées
+})
+
+// Nettoyer le polling quand le composant est démonté
+onUnmounted(() => {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
+  }
 })
 
 async function fetchData() {
@@ -1251,6 +1272,40 @@ let pollInterval = null // Stocker l'intervalle de polling
 async function startReplication(replication) {
   if (!confirm(`Voulez-vous démarrer la réplication de ${replication.vm_name} ?`)) return
 
+  try {
+    // Vérifier si une replica existe déjà
+    const checkResponse = await vmReplicationsAPI.checkReplicaExists(replication.id)
+
+    if (checkResponse.data.exists) {
+      // Afficher le modal de confirmation
+      replicaExistsModalData.value = {
+        replicationId: replication.id,
+        replicaName: checkResponse.data.replica_name,
+        deleting: false
+      }
+      showReplicaExistsModal.value = true
+      return
+    }
+
+    // Pas de replica existante, continuer normalement
+    await startReplicationWithoutCheck(replication)
+
+  } catch (error) {
+    console.error('Erreur vérification replica:', error)
+    // En cas d'erreur de vérification, continuer quand même
+    await startReplicationWithoutCheck(replication)
+  }
+}
+
+async function startReplicationWithoutCheck(replication) {
+  // Initialiser dans le store pour persistence
+  operationsStore.setOperation('replication', replication.id, {
+    vmName: replication.vm_name,
+    progress: 0,
+    status: 'starting',
+    message: 'Démarrage de la réplication...'
+  })
+
   replicatingId.value = replication.id
   replicationProgress.value = 0
   replicationStatus.value = 'starting'
@@ -1271,11 +1326,29 @@ async function startReplication(replication) {
     if (replicationId) {
       currentReplicationId.value = replicationId
 
+      // Sauvegarder le currentReplicationId dans le store pour restauration après refresh
+      operationsStore.setOperation('replication', replication.id, {
+        vmName: replication.vm_name,
+        progress: 0,
+        status: 'starting',
+        message: 'Démarrage de la réplication...',
+        currentReplicationId: replicationId  // UUID pour le polling
+      })
+
       // Polling toutes les 500ms pour récupérer la progression
       pollInterval = setInterval(async () => {
         try {
           const progressResponse = await vmReplicationsAPI.getReplicationProgress(replicationId)
           const progressData = progressResponse.data
+
+          // Mettre à jour le store ET les variables locales
+          operationsStore.updateProgress(
+            'replication',
+            replication.id,
+            progressData.progress,
+            progressData.status,
+            progressData.message
+          )
 
           replicationProgress.value = progressData.progress
           replicationStatus.value = progressData.status
@@ -1290,14 +1363,16 @@ async function startReplication(replication) {
 
             if (progressData.status === 'completed') {
               toast.success('Réplication terminée')
-              // Réinitialiser les valeurs de progression après 3 secondes
+              // Retirer du store après 10 secondes
               setTimeout(() => {
+                operationsStore.removeOperation('replication', replication.id)
                 replicationProgress.value = 0
                 replicationStatus.value = ''
                 replicationMessage.value = ''
-              }, 3000)
+              }, 10000)
             } else if (progressData.status === 'cancelled') {
               toast.info('Réplication annulée par l\'utilisateur')
+              operationsStore.removeOperation('replication', replication.id)
               replicationProgress.value = 0
               replicationStatus.value = ''
               replicationMessage.value = ''
@@ -1339,6 +1414,7 @@ async function startReplication(replication) {
                 toast.error(errorMessage || 'La réplication a échoué')
               }
 
+              operationsStore.removeOperation('replication', replication.id)
               replicationProgress.value = 0
               replicationStatus.value = ''
               replicationMessage.value = ''
@@ -1350,6 +1426,7 @@ async function startReplication(replication) {
             clearInterval(pollInterval)
             pollInterval = null
           }
+          operationsStore.removeOperation('replication', replication.id)
           replicatingId.value = null
           currentReplicationId.value = null
         }
@@ -1363,10 +1440,124 @@ async function startReplication(replication) {
     console.error('Erreur démarrage réplication:', error)
     const errorMsg = error.response?.data?.error || 'Impossible de démarrer la réplication'
     toast.error(errorMsg)
+    operationsStore.removeOperation('replication', replication.id)
     replicatingId.value = null
     replicationProgress.value = 0
     replicationStatus.value = ''
     replicationMessage.value = ''
+  }
+}
+
+// Fonction pour reprendre une réplication en cours après rechargement de page
+function resumeReplication(replicationId, opData) {
+  const replication = replications.value.find(r => r.id === replicationId)
+  if (!replication) return
+
+  replicatingId.value = replicationId
+  replicationProgress.value = opData.progress
+  replicationStatus.value = opData.status
+  replicationMessage.value = opData.message
+
+  // Relancer le polling pour suivre la progression
+  if (!currentReplicationId.value) {
+    // On utilise opData.id qui contient le UUID de la réplication en cours
+    currentReplicationId.value = opData.currentReplicationId
+
+    pollInterval = setInterval(async () => {
+      try {
+        const progressResponse = await vmReplicationsAPI.getReplicationProgress(opData.currentReplicationId)
+        const progressData = progressResponse.data
+
+        operationsStore.updateProgress(
+          'replication',
+          replicationId,
+          progressData.progress,
+          progressData.status,
+          progressData.message
+        )
+
+        replicationProgress.value = progressData.progress
+        replicationStatus.value = progressData.status
+        replicationMessage.value = progressData.message
+
+        if (['completed', 'error', 'cancelled'].includes(progressData.status)) {
+          clearInterval(pollInterval)
+          pollInterval = null
+          replicatingId.value = null
+          currentReplicationId.value = null
+
+          if (progressData.status === 'completed') {
+            toast.success('Réplication terminée')
+            setTimeout(() => {
+              operationsStore.removeOperation('replication', replicationId)
+              replicationProgress.value = 0
+              replicationStatus.value = ''
+              replicationMessage.value = ''
+            }, 10000)
+          } else {
+            operationsStore.removeOperation('replication', replicationId)
+            replicationProgress.value = 0
+            replicationStatus.value = ''
+            replicationMessage.value = ''
+          }
+        }
+      } catch (pollErr) {
+        console.error('Erreur polling reprise:', pollErr)
+        clearInterval(pollInterval)
+        pollInterval = null
+        operationsStore.removeOperation('replication', replicationId)
+        replicatingId.value = null
+        currentReplicationId.value = null
+      }
+    }, 500)
+  }
+}
+
+// Fonction pour supprimer la replica existante et relancer la réplication
+async function deleteReplicaAndRetry() {
+  replicaExistsModalData.value.deleting = true
+
+  try {
+    const replication = replications.value.find(r => r.id === replicaExistsModalData.value.replicationId)
+    if (!replication) {
+      toast.error('Réplication introuvable')
+      return
+    }
+
+    toast.info('Suppression de l\'ancienne replica en cours...')
+
+    // Supprimer la réplication qui va automatiquement supprimer la replica
+    await vmReplicationsAPI.delete(replication.id)
+
+    // Recréer la réplication avec les mêmes paramètres
+    const newReplication = await vmReplicationsAPI.create({
+      name: replication.name,
+      virtual_machine: replication.virtual_machine,
+      destination_server: replication.destination_server,
+      destination_datastore: replication.destination_datastore,
+      replication_interval_minutes: replication.replication_interval_minutes,
+      failover_mode: replication.failover_mode,
+      auto_failover_threshold_minutes: replication.auto_failover_threshold_minutes,
+      is_active: replication.is_active
+    })
+
+    toast.success('Ancienne replica supprimée, nouvelle réplication créée')
+
+    // Fermer le modal
+    showReplicaExistsModal.value = false
+
+    // Rafraîchir la liste
+    await fetchData()
+
+    // Lancer la nouvelle réplication
+    const newReplData = newReplication.data
+    await startReplicationWithoutCheck(newReplData)
+
+  } catch (error) {
+    console.error('Erreur suppression replica:', error)
+    toast.error(error.response?.data?.error || 'Erreur lors de la suppression de la replica')
+  } finally {
+    replicaExistsModalData.value.deleting = false
   }
 }
 
