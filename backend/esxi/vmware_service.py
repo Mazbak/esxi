@@ -1196,7 +1196,7 @@ class VMwareService:
         vm = search_index.FindByUuid(None, vm_uuid, True, True)
         return vm
 
-    def deploy_ovf(self, ovf_path, vm_name, datastore_name, network_name="VM Network", power_on=False, progress_callback=None, restore_id=None):
+    def deploy_ovf(self, ovf_path, vm_name, datastore_name, network_name="VM Network", power_on=False, progress_callback=None, restore_id=None, disk_provisioning=None):
         """
         Déploie un OVF sur ESXi (restauration d'une sauvegarde).
 
@@ -1208,6 +1208,7 @@ class VMwareService:
             power_on: Démarrer la VM après déploiement
             progress_callback: Fonction callback pour la progression
             restore_id: ID de restauration pour vérifier l'annulation
+            disk_provisioning: Mode de provisioning des disques ('thin', 'thick', None=auto)
 
         Returns:
             True si succès, False sinon
@@ -1321,9 +1322,15 @@ class VMwareService:
             # Créer les spécifications d'import
             spec_params = vim.OvfManager.CreateImportSpecParams()
             spec_params.entityName = vm_name
-            # CRITICAL: Ne PAS forcer diskProvisioning - laisser ESXi auto-détecter depuis le VMDK
-            # Forcer "thin" ou autre cause ESXi à rejeter les disques streamOptimized
-            logger.info("[DEPLOY] Disk provisioning: AUTO (ESXi auto-détecte depuis VMDK)")
+
+            # Configurer le disk provisioning si spécifié
+            if disk_provisioning:
+                spec_params.diskProvisioning = disk_provisioning
+                logger.info(f"[DEPLOY] Disk provisioning: {disk_provisioning} (forcé)")
+            else:
+                # Par défaut, laisser ESXi auto-détecter depuis le VMDK
+                # Ceci est important pour les disques streamOptimized
+                logger.info("[DEPLOY] Disk provisioning: AUTO (ESXi auto-détecte depuis VMDK)")
 
             # Mapping réseau
             network_mapping = vim.OvfManager.NetworkMapping()

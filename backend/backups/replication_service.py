@@ -783,7 +783,8 @@ class ReplicationService:
                 network_name='VM Network',
                 power_on=False,  # Ne pas démarrer la replica automatiquement
                 progress_callback=deploy_progress_callback,
-                restore_id=replication_id  # Utiliser replication_id pour vérifier les annulations
+                restore_id=replication_id,  # Utiliser replication_id pour vérifier les annulations
+                disk_provisioning='thin'  # Forcer thin provisioning pour économiser l'espace
             )
 
             if not deploy_success:
