@@ -1,15 +1,15 @@
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div class="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50">
     <!-- Sidebar -->
     <Sidebar :is-open="sidebarOpen" @close="sidebarOpen = false" />
 
     <!-- Main Content -->
-    <div class="lg:pl-64">
+    <div class="lg:pl-72">
       <!-- Header -->
       <Header @toggle-sidebar="sidebarOpen = !sidebarOpen" />
 
       <!-- Page Content -->
-      <main class="py-6 px-4 sm:px-6 lg:px-8">
+      <main class="py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
         <router-view />
       </main>
     </div>
