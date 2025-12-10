@@ -3047,6 +3047,54 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
         
         return Response({'message': 'Réplication reprise'})
     
+    @action(detail=True, methods=['get'])
+    def check_replica_exists(self, request, pk=None):
+        """Vérifier si une VM replica existe déjà sur le serveur de destination"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        replication = self.get_object()
+        vm_name = replication.virtual_machine.name
+        replica_vm_name = f"{vm_name}_replica"
+        destination_server = replication.destination_server
+
+        try:
+            from backups.replication_service import ReplicationService
+            service = ReplicationService()
+
+            logger.info(f"[CHECK-REPLICA] Vérification replica: {replica_vm_name} sur {destination_server.hostname}")
+
+            # Se connecter au serveur de destination
+            dest_si = service._connect_to_server(destination_server)
+
+            # Vérifier si la replica existe
+            existing_replica = service._get_vm_by_name(dest_si, replica_vm_name)
+
+            # Déconnexion
+            from pyVim.connect import Disconnect
+            Disconnect(dest_si)
+
+            if existing_replica:
+                logger.info(f"[CHECK-REPLICA] Replica trouvée: {replica_vm_name}")
+                return Response({
+                    'exists': True,
+                    'replica_name': replica_vm_name,
+                    'message': f'Une VM replica "{replica_vm_name}" existe déjà sur le serveur de destination'
+                })
+            else:
+                logger.info(f"[CHECK-REPLICA] Aucune replica trouvée")
+                return Response({
+                    'exists': False,
+                    'message': 'Aucune replica existante'
+                })
+
+        except Exception as e:
+            logger.error(f"[CHECK-REPLICA] Erreur lors de la vérification: {e}", exc_info=True)
+            return Response(
+                {'error': str(e), 'exists': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=True, methods=['post'])
     def trigger_failover(self, request, pk=None):
         """Déclencher un failover manuel"""
