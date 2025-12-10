@@ -1082,13 +1082,17 @@ async function removeSnapshotsAndRetry() {
       // Fermer le modal
       showSnapshotModal.value = false
 
-      // Attendre 2 secondes puis relancer la réplication automatiquement
+      // Informer l'utilisateur que la réplication va redémarrer
+      toast.info('⏱️ Attente de la consolidation des disques ESXi... La réplication redémarrera dans 15 secondes', { duration: 6000 })
+
+      // Attendre 15 secondes pour que ESXi finisse la consolidation en arrière-plan
       setTimeout(() => {
         const replication = replications.value.find(r => r.id === snapshotModalData.value.replicationId)
         if (replication) {
+          toast.info('🔄 Relancement de la réplication...')
           startReplication(replication)
         }
-      }, 2000)
+      }, 15000)
     } else {
       toast.error(`Échec: ${response.data.message}`)
     }
