@@ -228,22 +228,35 @@
                 <!-- Sync Info -->
                 <td class="px-4 py-4">
                   <div class="space-y-1">
+                    <!-- Syncing Indicator -->
+                    <div v-if="isSyncing(replication)" class="flex items-center gap-2 text-xs mb-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
+                      <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span class="font-semibold text-blue-700">🔄 Synchronisation en cours...</span>
+                    </div>
+
                     <!-- Last Sync -->
                     <div class="flex items-center gap-2 text-xs">
                       <span class="text-gray-500">Dernier sync:</span>
                       <span class="font-medium text-gray-700">{{ formatRelativeTime(replication.last_replication_at) }}</span>
                     </div>
-                    <!-- Next Sync -->
-                    <div v-if="replication.is_active && vmStates[replication.id]?.sync_info" class="flex items-center gap-2 text-xs">
+
+                    <!-- Next Sync with Countdown -->
+                    <div v-if="replication.is_active && getNextSyncCountdown(replication)" class="flex items-center gap-2 text-xs">
                       <span class="text-gray-500">Prochain sync:</span>
-                      <span v-if="vmStates[replication.id].sync_info.time_to_next_sync_minutes !== null" class="font-medium" :class="vmStates[replication.id].sync_info.time_to_next_sync_minutes <= 5 ? 'text-green-600' : 'text-gray-700'">
-                        {{ vmStates[replication.id].sync_info.time_to_next_sync_minutes > 0 ? `Dans ${vmStates[replication.id].sync_info.time_to_next_sync_minutes} min` : 'Imminent' }}
+                      <span class="font-medium" :class="getNextSyncCountdown(replication).color">
+                        {{ getNextSyncCountdown(replication).text }}
                       </span>
-                      <span v-else class="text-orange-500">Première sync en attente</span>
+                      <svg v-if="getNextSyncCountdown(replication).isImminent" class="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                      </svg>
                     </div>
                     <div v-else-if="!replication.is_active" class="text-xs text-gray-400">
                       ⏸️ Désactivée
                     </div>
+
                     <!-- Duration if available -->
                     <div v-if="replication.last_replication_duration_seconds" class="text-xs text-gray-400">
                       ⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}
@@ -1192,6 +1205,10 @@ const replicationHistory = ref({}) // { replicationId: [...logs] }
 const loadingStates = ref(new Set()) // Set of replication IDs being loaded
 const loadingHistory = ref(new Set()) // Set of replication IDs with history being loaded
 
+// Auto-refresh intervals
+let statesRefreshInterval = null
+let countdownInterval = null
+
 const form = ref({
   name: '',
   virtual_machine: '',
@@ -1250,13 +1267,34 @@ onMounted(() => {
       })
     }
   }, 500) // Attendre que les données soient chargées
+
+  // Auto-refresh des états VMs toutes les 30 secondes
+  statesRefreshInterval = setInterval(() => {
+    if (replications.value.length > 0) {
+      fetchAllVMStates()
+    }
+  }, 30000) // 30 secondes
+
+  // Force re-render toutes les secondes pour le compte à rebours
+  countdownInterval = setInterval(() => {
+    // Force Vue to re-render by creating a new reference
+    vmStates.value = { ...vmStates.value }
+  }, 1000) // 1 seconde
 })
 
-// Nettoyer le polling quand le composant est démonté
+// Nettoyer tous les intervalles quand le composant est démonté
 onUnmounted(() => {
   if (pollInterval) {
     clearInterval(pollInterval)
     pollInterval = null
+  }
+  if (statesRefreshInterval) {
+    clearInterval(statesRefreshInterval)
+    statesRefreshInterval = null
+  }
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+    countdownInterval = null
   }
 })
 
@@ -1370,6 +1408,45 @@ function getPowerStateText(powerState) {
   if (powerState === 'poweredOff') return 'Éteinte'
   if (powerState === 'suspended') return 'Suspendue'
   return 'Inconnue'
+}
+
+function getNextSyncCountdown(replication) {
+  if (!replication.is_active) return null
+  if (!vmStates.value[replication.id]?.sync_info) return null
+
+  const syncInfo = vmStates.value[replication.id].sync_info
+  if (!syncInfo.next_sync) return { text: 'En attente...', color: 'text-gray-500', isImminent: false }
+
+  const nextSync = new Date(syncInfo.next_sync)
+  const now = new Date()
+  const diffSeconds = Math.floor((nextSync - now) / 1000)
+
+  // Si en retard ou très proche (< 30 secondes)
+  if (diffSeconds < 30) {
+    return { text: 'Imminent', color: 'text-green-600 animate-pulse', isImminent: true }
+  }
+
+  // Afficher en minutes et secondes
+  const minutes = Math.floor(diffSeconds / 60)
+  const seconds = diffSeconds % 60
+
+  if (minutes > 0) {
+    return {
+      text: `Dans ${minutes}m ${seconds}s`,
+      color: minutes <= 2 ? 'text-orange-500' : 'text-gray-700',
+      isImminent: minutes <= 2
+    }
+  } else {
+    return {
+      text: `Dans ${seconds}s`,
+      color: 'text-orange-500 font-semibold',
+      isImminent: true
+    }
+  }
+}
+
+function isSyncing(replication) {
+  return replication.status === 'syncing' || replicatingId.value === replication.id
 }
 
 async function fetchDatastores(serverId) {
