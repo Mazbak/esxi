@@ -1043,12 +1043,28 @@
                 </div>
               </div>
               <div class="flex-1">
-                <h4 class="text-lg font-bold text-gray-900 mb-2">Replica Existante</h4>
+                <h4 class="text-lg font-bold text-gray-900 mb-2">Replica de la Même VM Détectée</h4>
                 <p class="text-gray-700 leading-relaxed">
-                  Une VM replica <strong class="text-purple-600">{{ replicaExistsModalData.replicaName }}</strong> existe déjà sur le serveur de destination.
+                  La VM <strong class="text-blue-600">{{ replicaExistsModalData.vmName }}</strong> possède déjà une replica <strong class="text-purple-600">{{ replicaExistsModalData.replicaName }}</strong> sur le serveur de destination.
                 </p>
+                <div class="mt-3 bg-white rounded-lg p-3 border border-purple-200">
+                  <div class="flex items-center gap-2 text-sm">
+                    <svg class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="font-medium text-gray-700">VM Source :</span>
+                    <span class="text-blue-600 font-semibold">{{ replicaExistsModalData.vmName }}</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-sm mt-2">
+                    <svg class="w-5 h-5 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="font-medium text-gray-700">Replica Existante :</span>
+                    <span class="text-purple-600 font-semibold">{{ replicaExistsModalData.replicaName }}</span>
+                  </div>
+                </div>
                 <p class="text-gray-600 mt-3 text-sm">
-                  📦 Cette replica est probablement issue d'une réplication précédente. Pour continuer la nouvelle réplication, vous devez supprimer l'ancienne replica.
+                  ⚠️ Pour lancer une nouvelle réplication de <strong>{{ replicaExistsModalData.vmName }}</strong>, l'ancienne replica doit être supprimée d'abord.
                 </p>
               </div>
             </div>
@@ -1192,6 +1208,7 @@ const showReplicaExistsModal = ref(false)
 const replicaExistsModalData = ref({
   replicationId: null,
   replicaName: '',
+  vmName: '', // Nom de la VM source
   deleting: false
 })
 
@@ -1611,20 +1628,24 @@ async function startReplication(replication) {
   if (!confirm(`Voulez-vous démarrer la réplication de ${replication.vm_name} ?`)) return
 
   try {
-    // Vérifier si une replica existe déjà
+    // TOUJOURS vérifier si une replica existe déjà AVANT chaque réplication
+    console.log('[CHECK-REPLICA] Vérification replica pour VM:', replication.vm_name)
     const checkResponse = await vmReplicationsAPI.checkReplicaExists(replication.id)
 
     if (checkResponse.data.exists) {
-      // Afficher le modal de confirmation
+      console.log('[CHECK-REPLICA] ⚠️ Replica trouvée:', checkResponse.data.replica_name)
+      // Afficher le modal de confirmation - OBLIGATOIRE pour la même VM
       replicaExistsModalData.value = {
         replicationId: replication.id,
         replicaName: checkResponse.data.replica_name,
+        vmName: replication.vm_name, // Ajouter le nom de la VM source
         deleting: false
       }
       showReplicaExistsModal.value = true
       return
     }
 
+    console.log('[CHECK-REPLICA] ✓ Aucune replica trouvée, démarrage...')
     // Pas de replica existante, continuer normalement
     await startReplicationWithoutCheck(replication)
 
