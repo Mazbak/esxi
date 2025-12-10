@@ -16,10 +16,12 @@ Les snapshots sont exécutés automatiquement selon les planifications configur�
 
 - **Snapshots** : Vérifiés **toutes les minutes** pour une précision maximale
 - **Backups** : Vérifiés toutes les heures
+- **Réplications** : Vérifiées **toutes les 5 minutes** (nouvelle fonctionnalité)
+- **Auto-failover** : Vérifié **toutes les minutes** pour réaction rapide (nouvelle fonctionnalité)
 - **Nettoyage** : Une fois par jour à 3h du matin
 - **Vérification santé** : Toutes les 6 heures
 
-### Processus d'exécution
+### Processus d'exécution - Snapshots
 
 1. **Celery Beat** vérifie toutes les minutes s'il y a des snapshots à exécuter
 2. Pour chaque planification active :
@@ -31,7 +33,32 @@ Les snapshots sont exécutés automatiquement selon les planifications configur�
    - Crée le snapshot
    - Applique la politique de rétention (supprime les anciens snapshots)
 
-### Configuration des planifications
+### Processus d'exécution - Réplications (NOUVEAU)
+
+1. **Celery Beat** vérifie toutes les 5 minutes s'il y a des réplications à exécuter
+2. Pour chaque réplication active (`is_active=True`) :
+   - Vérifie le temps écoulé depuis `last_replication_at`
+   - Si `temps_écoulé >= replication_interval_minutes`, lance la réplication
+   - Si c'est la première réplication (`last_replication_at` vide), lance immédiatement
+3. **Celery Worker** exécute la réplication :
+   - Exporte la VM source en OVF
+   - Transfère vers le serveur de destination
+   - Déploie la VM replica (suffixe `_replica`)
+   - Met à jour `last_replication_at` et `status`
+
+### Processus d'exécution - Auto-Failover (NOUVEAU)
+
+1. **Celery Beat** vérifie **toutes les minutes** s'il y a des pannes détectées
+2. Pour chaque réplication en mode `failover_mode='automatic'` :
+   - Vérifie l'état de la VM source
+   - Si la VM source est **éteinte** depuis `>= auto_failover_threshold_minutes` :
+     - Déclenche automatiquement le failover
+     - Arrête la VM source (si encore allumée)
+     - Démarre la VM replica sur le serveur de destination
+     - Crée un `FailoverEvent` avec type='automatic'
+     - Envoie une notification email d'urgence
+
+### Configuration des planifications de snapshots
 
 Dans l'interface web, vous pouvez configurer :
 - **Fréquence** : Hourly, Daily, Weekly, Monthly
@@ -39,6 +66,37 @@ Dans l'interface web, vous pouvez configurer :
 - **Minute** : 0-59 (précision à la minute pour hourly)
 - **Rétention** : Nombre de snapshots à conserver
 - **Mémoire** : Inclure la RAM dans le snapshot
+
+### Configuration des réplications automatiques (NOUVEAU)
+
+Dans l'interface web ou via l'API, configurez :
+- **is_active** : `true` pour activer la réplication automatique
+- **replication_interval_minutes** : Intervalle entre les réplications (défaut: 15 min, minimum recommandé: 5 min)
+- **failover_mode** :
+  - `manual` : Failover uniquement sur déclenchement manuel
+  - `automatic` : Failover automatique en cas de panne détectée
+  - `test` : Mode test (ne coupe pas la VM source)
+- **auto_failover_threshold_minutes** : Délai avant déclenchement auto-failover (défaut: 5 min)
+
+**Exemple de configuration** :
+```json
+{
+  "name": "Réplication Production DB",
+  "virtual_machine": 1,
+  "source_server": 1,
+  "destination_server": 2,
+  "replication_interval_minutes": 15,
+  "failover_mode": "automatic",
+  "auto_failover_threshold_minutes": 5,
+  "is_active": true
+}
+```
+
+**Comportement** :
+- La réplication s'exécutera **toutes les 15 minutes** automatiquement
+- Si la VM source est éteinte pendant **plus de 5 minutes**, le failover automatique se déclenche
+- La VM replica est démarrée sur le serveur de destination
+- Une notification email est envoyée immédiatement
 
 ## Services Requis
 
@@ -106,7 +164,7 @@ tail -f /tmp/celery-beat.log
 grep "CELERY-SNAPSHOT" /tmp/celery-worker.log
 ```
 
-### Tester une planification
+### Tester une planification de snapshot
 
 1. Créez une planification dans l'interface web :
    - Fréquence : Hourly
@@ -120,6 +178,104 @@ grep "CELERY-SNAPSHOT" /tmp/celery-worker.log
 tail -50 /tmp/celery-beat.log | grep "check-and-execute-snapshot"
 tail -50 /tmp/celery-worker.log | grep "CELERY-SNAPSHOT"
 ```
+
+### Tester une réplication automatique (NOUVEAU)
+
+1. Créez une réplication avec intervalle court :
+```bash
+# Via Django shell
+python manage.py shell
+
+from backups.models import VMReplication
+from esxi.models import VirtualMachine, ESXiServer
+
+repl = VMReplication.objects.create(
+    name="Test Réplication Auto",
+    virtual_machine=VirtualMachine.objects.first(),
+    source_server=ESXiServer.objects.get(id=1),
+    destination_server=ESXiServer.objects.get(id=2),
+    replication_interval_minutes=5,  # Toutes les 5 minutes
+    failover_mode='manual',
+    is_active=True
+)
+```
+
+2. Attendez 5 minutes maximum (Celery Beat vérifie toutes les 5 minutes)
+
+3. Vérifiez les logs :
+```bash
+# Vérification de la réplication
+grep "CELERY-REPLICATION" /tmp/celery-beat.log | tail -20
+
+# Exécution de la réplication
+grep "CELERY-REPLICATION-EXEC" /tmp/celery-worker.log | tail -50
+```
+
+4. Vérifiez dans la base de données :
+```bash
+python manage.py shell
+
+from backups.models import VMReplication
+repl = VMReplication.objects.get(name="Test Réplication Auto")
+print(f"Dernière réplication: {repl.last_replication_at}")
+print(f"Statut: {repl.status}")
+```
+
+### Tester l'auto-failover (NOUVEAU)
+
+**⚠️ ATTENTION : Ceci déclenchera un vrai failover !**
+
+1. Créez une réplication en mode automatique :
+```bash
+python manage.py shell
+
+from backups.models import VMReplication
+repl = VMReplication.objects.get(name="Test Réplication Auto")
+repl.failover_mode = 'automatic'
+repl.auto_failover_threshold_minutes = 2  # 2 minutes pour le test
+repl.save()
+```
+
+2. Effectuez une réplication manuelle pour avoir une replica à jour :
+```bash
+# Via l'API ou l'interface web
+POST /api/vm-replications/{id}/start_replication/
+```
+
+3. Attendez que la réplication soit terminée (100%)
+
+4. **Arrêtez la VM source** (pour simuler une panne) :
+```bash
+# Via vSphere Client ou commande ESXi
+vim-cmd vmsvc/power.off <vmid>
+```
+
+5. Attendez 2-3 minutes (le threshold + temps de détection)
+
+6. Vérifiez les logs :
+```bash
+# Vérification auto-failover
+grep "CELERY-FAILOVER" /tmp/celery-beat.log | tail -20
+
+# Exécution du failover
+grep "AUTO-FAILOVER" /tmp/celery-worker.log | tail -30
+```
+
+7. Vérifiez l'événement de failover :
+```bash
+python manage.py shell
+
+from backups.models import FailoverEvent
+events = FailoverEvent.objects.filter(failover_type='automatic').order_by('-created_at')
+for e in events[:5]:
+    print(f"{e.created_at}: {e.replication.name} - {e.status} - {e.reason}")
+```
+
+**Résultat attendu** :
+- VM source arrêtée
+- VM replica démarrée automatiquement sur le serveur de destination
+- FailoverEvent créé avec type='automatic'
+- Email de notification envoyé
 
 ## Arrêt des Services
 
