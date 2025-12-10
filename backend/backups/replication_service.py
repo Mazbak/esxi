@@ -348,7 +348,19 @@ class ReplicationService:
         logger.info(f"[REPLICATION] Début export OVF de {vm_name}")
 
         # VÉRIFICATION CRITIQUE: Détecter les conditions qui empêchent l'export
-        # 1. Vérifier les snapshots
+        # 1. Vérifier si la VM est allumée
+        power_state = vm_obj.runtime.powerState
+        if power_state == vim.VirtualMachinePowerState.poweredOn:
+            error_msg = (
+                f"La VM '{vm_name}' est actuellement allumée (powered on). "
+                f"Pour garantir la cohérence des données lors de la réplication, "
+                f"la VM doit être éteinte. "
+                f"Voulez-vous éteindre la VM automatiquement ?"
+            )
+            logger.error(f"[REPLICATION] {error_msg}")
+            raise Exception(error_msg)
+
+        # 2. Vérifier les snapshots
         if vm_obj.snapshot is not None:
             snapshot_count = len(vm_obj.snapshot.rootSnapshotList)
             error_msg = (
@@ -359,7 +371,7 @@ class ReplicationService:
             logger.error(f"[REPLICATION] {error_msg}")
             raise Exception(error_msg)
 
-        # 2. Vérifier les disques indépendants
+        # 3. Vérifier les disques indépendants
         for device in vm_obj.config.hardware.device:
             if isinstance(device, vim.vm.device.VirtualDisk):
                 backing = device.backing

@@ -557,6 +557,103 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['post'])
+    def power_off(self, request, pk=None):
+        """
+        Éteint une VM.
+        """
+        vm = self.get_object()
+        server = vm.server
+
+        try:
+            # Créer le service VMware
+            vmware = VMwareService(
+                host=server.hostname,
+                user=server.username,
+                password=server.password,
+                port=server.port or 443
+            )
+
+            # Connexion
+            if not vmware.connect():
+                return Response(
+                    {'error': f'Impossible de se connecter au serveur {server.hostname}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Éteindre la VM
+            result = vmware.power_off_vm(vm.vm_id)
+
+            # Déconnexion
+            vmware.disconnect()
+
+            if result['success']:
+                return Response({
+                    'success': True,
+                    'message': result['message'],
+                    'was_powered_on': result['was_powered_on']
+                })
+            else:
+                return Response(
+                    {'error': result['message']},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            logger.exception(f"Erreur lors de l'extinction de la VM: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def power_on(self, request, pk=None):
+        """
+        Allume une VM.
+        """
+        vm = self.get_object()
+        server = vm.server
+
+        try:
+            # Créer le service VMware
+            vmware = VMwareService(
+                host=server.hostname,
+                user=server.username,
+                password=server.password,
+                port=server.port or 443
+            )
+
+            # Connexion
+            if not vmware.connect():
+                return Response(
+                    {'error': f'Impossible de se connecter au serveur {server.hostname}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Allumer la VM
+            result = vmware.power_on_vm(vm.vm_id)
+
+            # Déconnexion
+            vmware.disconnect()
+
+            if result['success']:
+                return Response({
+                    'success': True,
+                    'message': result['message']
+                })
+            else:
+                return Response(
+                    {'error': result['message']},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            logger.exception(f"Erreur lors de l'allumage de la VM: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ==========================================================
 # 🔹 DATASTORES

@@ -717,6 +717,143 @@
         </div>
       </div>
     </div>
+
+    <!-- Powered-On VM Modal - Modern Design -->
+    <div v-if="showPoweredOnModal" class="fixed inset-0 bg-gradient-to-br from-gray-900/90 via-blue-900/80 to-indigo-900/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden transform transition-all animate-slide-up">
+        <!-- Header avec gradient -->
+        <div class="relative px-8 py-6 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 overflow-hidden">
+          <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDEwIEwgNDAgMTAgTSAxMCAwIEwgMTAgNDAgTSAwIDIwIEwgNDAgMjAgTSAyMCAwIEwgMjAgNDAgTSAwIDMwIEwgNDAgMzAgTSAzMCAwIEwgMzAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-20"></div>
+          <div class="relative flex items-center gap-4">
+            <div class="p-4 bg-white/20 backdrop-blur-sm rounded-2xl">
+              <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <div>
+              <h3 class="text-2xl font-bold text-white">⚡ VM Allumée Détectée</h3>
+              <p class="text-blue-100 text-sm mt-1">La VM doit être éteinte pour la réplication</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content -->
+        <div class="px-8 py-6 space-y-6">
+          <!-- Explication du problème -->
+          <div class="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-2xl p-6">
+            <div class="flex gap-4">
+              <div class="flex-shrink-0">
+                <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-xl flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div class="flex-1">
+                <h4 class="text-lg font-bold text-gray-900 mb-2">Pourquoi ce problème ?</h4>
+                <p class="text-gray-700 leading-relaxed">
+                  La machine virtuelle <strong class="text-blue-600">{{ poweredOnModalData.vmName }}</strong>
+                  est actuellement <strong class="text-indigo-600">allumée (powered on)</strong>.
+                </p>
+                <p class="text-gray-600 mt-3 text-sm">
+                  ⚡ Pour garantir la <strong>cohérence des données</strong> lors de la réplication,
+                  la VM doit être éteinte. Cela évite les problèmes de corruption de données et assure
+                  une copie exacte de l'état de la VM.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Solution automatique -->
+          <div class="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-2xl p-6">
+            <div class="flex gap-4">
+              <div class="flex-shrink-0">
+                <div class="w-12 h-12 bg-gradient-to-br from-green-400 to-emerald-500 rounded-xl flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div class="flex-1">
+                <h4 class="text-lg font-bold text-gray-900 mb-2">✨ Processus automatique</h4>
+                <p class="text-gray-700 leading-relaxed">
+                  Je peux gérer tout le processus automatiquement pour vous :
+                </p>
+                <ul class="mt-3 space-y-2 text-sm text-gray-600">
+                  <li class="flex items-start gap-2">
+                    <svg class="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span><strong>Étape 1 :</strong> Éteindre la VM proprement</span>
+                  </li>
+                  <li class="flex items-start gap-2">
+                    <svg class="w-5 h-5 text-indigo-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span><strong>Étape 2 :</strong> Effectuer la réplication</span>
+                  </li>
+                  <li class="flex items-start gap-2">
+                    <svg class="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span><strong>Étape 3 :</strong> Rallumer la VM automatiquement après</span>
+                  </li>
+                </ul>
+                <div class="mt-4 flex items-center gap-2 text-xs text-gray-500 bg-white rounded-lg p-3 border border-gray-200">
+                  <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                  </svg>
+                  <span>Aucune intervention manuelle requise - tout est automatisé</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Warning -->
+          <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-lg">
+            <div class="flex gap-3">
+              <svg class="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+              <p class="text-sm text-yellow-800">
+                <strong>Important :</strong> L'extinction de la VM interrompra temporairement les services en cours d'exécution.
+                La VM sera automatiquement rallumée une fois la réplication terminée.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="px-8 py-6 bg-gradient-to-r from-gray-50 to-gray-100 border-t border-gray-200 flex justify-between items-center">
+          <button
+            @click="showPoweredOnModal = false"
+            :disabled="poweredOnModalData.poweringOff"
+            class="px-6 py-3 border-2 border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-white hover:border-gray-400 hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Annuler
+          </button>
+          <button
+            @click="powerOffAndRetry"
+            :disabled="poweredOnModalData.poweringOff"
+            class="px-8 py-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-indigo-600 hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-3"
+          >
+            <svg v-if="!poweredOnModalData.poweringOff" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <svg v-else class="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>
+              {{ poweredOnModalData.poweringOff ? 'Extinction en cours...' : 'Éteindre et Continuer' }}
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -752,6 +889,17 @@ const snapshotModalData = ref({
   snapshotCount: 0,
   replicationId: null,
   removing: false
+})
+
+// Powered-On VM Modal
+const showPoweredOnModal = ref(false)
+const poweredOnModalData = ref({
+  vmId: null,
+  vmName: '',
+  replicationId: null,
+  poweringOff: false,
+  poweringOn: false,
+  wasPoweredOn: false
 })
 
 // Progress tracking
@@ -1017,9 +1165,24 @@ async function startReplication(replication) {
               replicationStatus.value = ''
               replicationMessage.value = ''
             } else if (progressData.status === 'error') {
-              // Détecter l'erreur de snapshot
+              // Détecter le type d'erreur
               const errorMessage = progressData.message || ''
-              if (errorMessage.includes('snapshot')) {
+
+              // 1. Détecter l'erreur de VM allumée (powered on)
+              if (errorMessage.includes('powered on') || errorMessage.includes('allumée')) {
+                // Afficher le modal de gestion de VM allumée
+                poweredOnModalData.value = {
+                  vmId: replication.virtual_machine,
+                  vmName: replication.vm_name,
+                  replicationId: replication.id,
+                  poweringOff: false,
+                  poweringOn: false,
+                  wasPoweredOn: false
+                }
+                showPoweredOnModal.value = true
+              }
+              // 2. Détecter l'erreur de snapshot
+              else if (errorMessage.includes('snapshot')) {
                 // Extraire le nombre de snapshots si possible
                 const snapshotMatch = errorMessage.match(/(\d+)\s+snapshot/)
                 const snapshotCount = snapshotMatch ? parseInt(snapshotMatch[1]) : 0
@@ -1033,7 +1196,9 @@ async function startReplication(replication) {
                   removing: false
                 }
                 showSnapshotModal.value = true
-              } else {
+              }
+              // 3. Autres erreurs
+              else {
                 toast.error(errorMessage || 'La réplication a échoué')
               }
 
@@ -1102,6 +1267,122 @@ async function removeSnapshotsAndRetry() {
     toast.error(errorMsg)
   } finally {
     snapshotModalData.value.removing = false
+  }
+}
+
+// Fonction pour éteindre la VM, faire l'opération, puis rallumer la VM
+async function powerOffAndRetry() {
+  poweredOnModalData.value.poweringOff = true
+
+  try {
+    // 1. Éteindre la VM
+    toast.info('⏹️ Extinction de la VM en cours...')
+    const powerOffResponse = await virtualMachinesAPI.powerOff(poweredOnModalData.value.vmId)
+
+    if (powerOffResponse.data.success) {
+      poweredOnModalData.value.wasPoweredOn = powerOffResponse.data.was_powered_on
+
+      toast.success('VM éteinte avec succès')
+      poweredOnModalData.value.poweringOff = false
+
+      // Fermer le modal
+      showPoweredOnModal.value = false
+
+      // 2. Attendre un peu pour que ESXi finalise l'extinction
+      toast.info('⏱️ Démarrage de la réplication...')
+      await new Promise(resolve => setTimeout(resolve, 3000))
+
+      // 3. Lancer la réplication
+      const replication = replications.value.find(r => r.id === poweredOnModalData.value.replicationId)
+      if (replication) {
+        // Démarrer la réplication sans confirmation
+        replicatingId.value = replication.id
+        replicationProgress.value = 0
+        replicationStatus.value = 'starting'
+        replicationMessage.value = 'Démarrage de la réplication...'
+
+        const response = await vmReplicationsAPI.startReplication(replication.id)
+        const replicationId = response.data.replication_id
+
+        if (response.data.warning) {
+          toast.warning(response.data.message)
+        } else {
+          toast.success(response.data.message || 'Réplication démarrée')
+        }
+
+        // Polling de la réplication
+        if (replicationId) {
+          currentReplicationId.value = replicationId
+
+          pollInterval = setInterval(async () => {
+            try {
+              const progressResponse = await vmReplicationsAPI.getReplicationProgress(replicationId)
+              const progressData = progressResponse.data
+
+              replicationProgress.value = progressData.progress
+              replicationStatus.value = progressData.status
+              replicationMessage.value = progressData.message
+
+              // Vérifier si terminé
+              if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
+                clearInterval(pollInterval)
+                pollInterval = null
+                replicatingId.value = null
+                currentReplicationId.value = null
+
+                if (progressData.status === 'completed') {
+                  toast.success('✅ Réplication terminée')
+
+                  // 4. Rallumer la VM si elle était allumée avant
+                  if (poweredOnModalData.value.wasPoweredOn) {
+                    poweredOnModalData.value.poweringOn = true
+                    toast.info('🔌 Rallumage de la VM...')
+
+                    try {
+                      const powerOnResponse = await virtualMachinesAPI.powerOn(poweredOnModalData.value.vmId)
+                      if (powerOnResponse.data.success) {
+                        toast.success('✅ VM rallumée avec succès')
+                      } else {
+                        toast.warning('⚠️ Impossible de rallumer la VM automatiquement')
+                      }
+                    } catch (powerOnError) {
+                      console.error('Erreur rallumage VM:', powerOnError)
+                      toast.warning('⚠️ Impossible de rallumer la VM automatiquement')
+                    } finally {
+                      poweredOnModalData.value.poweringOn = false
+                    }
+                  }
+
+                  // Réinitialiser après 3 secondes
+                  setTimeout(() => {
+                    replicationProgress.value = 0
+                    replicationStatus.value = ''
+                    replicationMessage.value = ''
+                  }, 3000)
+                } else if (progressData.status === 'error') {
+                  toast.error(progressData.message || 'La réplication a échoué')
+                  replicationProgress.value = 0
+                  replicationStatus.value = ''
+                  replicationMessage.value = ''
+                }
+              }
+            } catch (pollErr) {
+              console.error('Erreur polling:', pollErr)
+            }
+          }, 500)
+        }
+
+        fetchData()
+      }
+    } else {
+      toast.error(`Échec de l'extinction: ${powerOffResponse.data.message}`)
+    }
+  } catch (error) {
+    console.error('Erreur extinction VM:', error)
+    const errorMsg = error.response?.data?.error || 'Impossible d\'éteindre la VM'
+    toast.error(errorMsg)
+  } finally {
+    poweredOnModalData.value.poweringOff = false
   }
 }
 
