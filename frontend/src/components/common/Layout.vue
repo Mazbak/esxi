@@ -13,6 +13,9 @@
         <router-view />
       </main>
     </div>
+
+    <!-- Barres de progression persistantes -->
+    <OperationsProgress />
   </div>
 </template>
 
@@ -20,6 +23,7 @@
 import { ref } from 'vue'
 import Sidebar from './Sidebar.vue'
 import Header from './Header.vue'
+import OperationsProgress from './OperationsProgress.vue'
 
 const sidebarOpen = ref(false)
 </script>
