@@ -464,6 +464,26 @@ class VMReplicationSerializer(serializers.ModelSerializer):
             'source_server': {'required': False, 'allow_null': True}
         }
 
+    def validate(self, data):
+        """
+        Valider que l'intervalle est suffisant pour la taille de la VM
+        """
+        # Si on crée une nouvelle réplication ou on modifie l'intervalle
+        virtual_machine = data.get('virtual_machine', self.instance.virtual_machine if self.instance else None)
+        interval = data.get('replication_interval_minutes', self.instance.replication_interval_minutes if self.instance else None)
+
+        if virtual_machine and interval:
+            # Calculer l'intervalle minimum requis
+            vm_size_gb = virtual_machine.provisioned_space / (1024 ** 3)
+            min_interval = VMReplication.calculate_minimum_interval(vm_size_gb)
+
+            if interval < min_interval:
+                raise serializers.ValidationError({
+                    'replication_interval_minutes': f'L\'intervalle doit être au moins {min_interval} minutes pour une VM de {vm_size_gb:.1f} GB (catégorie: {"< 20 GB" if vm_size_gb < 20 else "20-100 GB" if vm_size_gb < 100 else "100-500 GB" if vm_size_gb < 500 else "> 500 GB"})'
+                })
+
+        return data
+
 
 class FailoverEventSerializer(serializers.ModelSerializer):
     """Serializer pour les événements de failover"""

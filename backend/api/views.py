@@ -654,6 +654,48 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['get'])
+    def get_minimum_interval(self, request, pk=None):
+        """
+        Obtenir l'intervalle minimum recommandé pour la réplication de cette VM
+        basé sur sa taille
+        """
+        vm = self.get_object()
+
+        try:
+            from backups.models import VMReplication
+
+            vm_size_gb = vm.provisioned_space / (1024 ** 3) if vm.provisioned_space else 0
+            min_interval = VMReplication.calculate_minimum_interval(vm_size_gb)
+
+            # Déterminer la catégorie
+            if vm_size_gb < 20:
+                category = "< 20 GB"
+                range_text = "15-30 min"
+            elif vm_size_gb < 100:
+                category = "20-100 GB"
+                range_text = "30-60 min"
+            elif vm_size_gb < 500:
+                category = "100-500 GB"
+                range_text = "60-120 min"
+            else:
+                category = "> 500 GB"
+                range_text = "120-360 min"
+
+            return Response({
+                'vm_size_gb': round(vm_size_gb, 2),
+                'minimum_interval_minutes': min_interval,
+                'category': category,
+                'recommended_range': range_text
+            })
+
+        except Exception as e:
+            logger.exception(f"Erreur lors du calcul de l'intervalle minimum: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # ==========================================================
 # 🔹 DATASTORES

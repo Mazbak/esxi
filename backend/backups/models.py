@@ -1292,6 +1292,61 @@ class VMReplication(models.Model):
         """
         return self.source_server or self.virtual_machine.server
 
+    @staticmethod
+    def calculate_minimum_interval(vm_size_gb):
+        """
+        Calculer l'intervalle minimum recommandé basé sur la taille de la VM (en minutes)
+
+        Règles:
+        - VM < 20 GB: 15 min minimum
+        - VM 20-100 GB: 30 min minimum
+        - VM 100-500 GB: 60 min minimum
+        - VM > 500 GB: 120 min minimum
+
+        Args:
+            vm_size_gb: Taille de la VM en GB
+
+        Returns:
+            int: Intervalle minimum en minutes
+        """
+        if vm_size_gb < 20:
+            return 15
+        elif vm_size_gb < 100:
+            return 30
+        elif vm_size_gb < 500:
+            return 60
+        else:
+            return 120
+
+    def get_minimum_interval(self):
+        """
+        Obtenir l'intervalle minimum recommandé pour cette réplication
+        basé sur la taille de la VM
+
+        Returns:
+            int: Intervalle minimum en minutes
+        """
+        try:
+            vm_size_gb = self.virtual_machine.provisioned_space / (1024 ** 3)  # Convertir en GB
+            return self.calculate_minimum_interval(vm_size_gb)
+        except:
+            return 15  # Défaut minimum si erreur
+
+    def clean(self):
+        """
+        Validation du modèle
+        """
+        from django.core.exceptions import ValidationError
+
+        # Vérifier que l'intervalle est suffisant pour la taille de la VM
+        if self.virtual_machine:
+            min_interval = self.get_minimum_interval()
+            if self.replication_interval_minutes < min_interval:
+                vm_size_gb = self.virtual_machine.provisioned_space / (1024 ** 3)
+                raise ValidationError({
+                    'replication_interval_minutes': f'L\'intervalle doit être au moins {min_interval} minutes pour une VM de {vm_size_gb:.1f} GB'
+                })
+
 
 class FailoverEvent(models.Model):
     """
