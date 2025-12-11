@@ -458,11 +458,26 @@ onUnmounted(() => {
 })
 
 // Vérifier l'état de la VM sélectionnée
-function onVMChange() {
+async function onVMChange() {
   if (form.value.virtual_machine) {
     selectedVM.value = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
-    console.log('🔄 OVFExport - VM sélectionnée:', selectedVM.value)
-    console.log('🔄 OVFExport - power_state:', selectedVM.value?.power_state)
+    console.log('🔄 OVFExport - VM sélectionnée (cache):', selectedVM.value)
+
+    // Récupérer l'état en temps réel depuis ESXi
+    try {
+      const { virtualMachinesAPI } = await import('@/services/api')
+      const response = await virtualMachinesAPI.getById(form.value.virtual_machine)
+      const vmRealTime = response.data
+
+      console.log('🔄 OVFExport - VM état temps réel:', vmRealTime)
+      console.log('🔄 OVFExport - power_state temps réel:', vmRealTime.power_state)
+
+      // Mettre à jour avec les données temps réel
+      selectedVM.value = vmRealTime
+    } catch (error) {
+      console.error('❌ Erreur récupération état VM:', error)
+      // Utiliser les données du cache si erreur
+    }
   } else {
     selectedVM.value = null
   }
