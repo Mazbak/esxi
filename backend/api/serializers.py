@@ -473,8 +473,8 @@ class VMReplicationSerializer(serializers.ModelSerializer):
         interval = data.get('replication_interval_minutes', self.instance.replication_interval_minutes if self.instance else None)
 
         if virtual_machine and interval:
-            # Calculer l'intervalle minimum requis
-            vm_size_gb = virtual_machine.provisioned_space / (1024 ** 3)
+            # Calculer l'intervalle minimum requis (utiliser disk_gb au lieu de provisioned_space)
+            vm_size_gb = virtual_machine.disk_gb if virtual_machine.disk_gb else 0
             min_interval = VMReplication.calculate_minimum_interval(vm_size_gb)
 
             if interval < min_interval:
