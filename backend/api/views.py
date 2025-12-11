@@ -43,7 +43,7 @@ from api.serializers import (
     ReplicationLogSerializer, BackupVerificationSerializer, BackupVerificationScheduleSerializer,
     EmailSettingsSerializer
 )
-from backups.tasks import execute_backup_job, execute_backup_verification  # Celery tasks
+from backups.tasks import execute_backup_job  # Celery tasks
 
 
 # ==========================================================
@@ -3360,108 +3360,11 @@ class FailoverEventViewSet(viewsets.ReadOnlyModelViewSet):
 # ==========================================================
 # 🔹 SUREBACKUP - Vérification de sauvegardes
 # ==========================================================
-class BackupVerificationViewSet(viewsets.ModelViewSet):
-    """Gestion des vérifications de sauvegardes (SureBackup)"""
-    queryset = BackupVerification.objects.all()
-    serializer_class = BackupVerificationSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['status', 'test_type', 'esxi_server']
-    ordering_fields = ['created_at', 'started_at', 'completed_at']
-    ordering = ['-created_at']
-    
-    @action(detail=False, methods=['post'])
-    def verify_ovf_export(self, request):
-        """Créer une vérification pour un export OVF"""
-        ovf_export_id = request.data.get('ovf_export_id')
-        esxi_server_id = request.data.get('esxi_server_id')
-        test_type = request.data.get('test_type', 'boot_ping')
-        
-        if not ovf_export_id or not esxi_server_id:
-            return Response(
-                {'error': 'ovf_export_id et esxi_server_id sont requis'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            ovf_export = OVFExportJob.objects.get(id=ovf_export_id, status='completed')
-            esxi_server = ESXiServer.objects.get(id=esxi_server_id)
-        except (OVFExportJob.DoesNotExist, ESXiServer.DoesNotExist) as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Créer la vérification
-        verification = BackupVerification.objects.create(
-            ovf_export=ovf_export,
-            esxi_server=esxi_server,
-            test_type=test_type,
-            status='pending',
-            test_datastore=request.data.get('test_datastore', 'datastore1')
-        )
-        
-        # TODO: Lancer la vérification en arrière-plan
-        # from backups.surebackup_service import SureBackupService
-        # service = SureBackupService()
-        # service.start_verification(verification.id)
-        
-        serializer = self.get_serializer(verification)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
-    @action(detail=True, methods=['post'])
-    def start_verification(self, request, pk=None):
-        """Démarrer une vérification manuellement"""
-        verification = self.get_object()
-
-        if verification.status != 'pending':
-            return Response(
-                {'error': 'La vérification a déjà été démarrée'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Lancer le service de vérification de manière asynchrone
-        execute_backup_verification.delay(verification.id)
-
-        serializer = self.get_serializer(verification)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'])
-    def statistics(self, request):
-        """Statistiques sur les vérifications de sauvegardes"""
-        total = BackupVerification.objects.count()
-        passed = BackupVerification.objects.filter(status='passed').count()
-        failed = BackupVerification.objects.filter(status='failed').count()
-        running = BackupVerification.objects.filter(status='running').count()
-        
-        success_rate = (passed / total * 100) if total > 0 else 0
-        
-        return Response({
-            'total': total,
-            'passed': passed,
-            'failed': failed,
-            'running': running,
-            'success_rate': round(success_rate, 2)
-        })
-
-
-class BackupVerificationScheduleViewSet(viewsets.ModelViewSet):
-    """Gestion des planifications de vérifications"""
-    queryset = BackupVerificationSchedule.objects.all()
-    serializer_class = BackupVerificationScheduleSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['virtual_machine', 'frequency', 'is_active']
-    ordering_fields = ['name', 'created_at']
-    ordering = ['name']
-    
-    @action(detail=True, methods=['post'])
-    def toggle_active(self, request, pk=None):
-        """Activer/Désactiver une planification"""
-        schedule = self.get_object()
-        schedule.is_active = not schedule.is_active
-        schedule.save()
-        
-        serializer = self.get_serializer(schedule)
-        return Response(serializer.data)
+# ==========================================================
+# 🔹 REMOVED: SureBackup ViewSets (Module supprimé)
+# ==========================================================
+# BackupVerificationViewSet et BackupVerificationScheduleViewSet
+# ont été retirés car le module SureBackup a été supprimé du système.
 
 
 # ==========================================================
