@@ -228,13 +228,16 @@
                 <!-- Sync Info -->
                 <td class="px-4 py-4">
                   <div class="space-y-1">
-                    <!-- Syncing Indicator -->
+                    <!-- Syncing Indicator with Progress -->
                     <div v-if="isSyncing(replication)" class="flex items-center gap-2 text-xs mb-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
                       <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      <span class="font-semibold text-blue-700">🔄 Synchronisation en cours...</span>
+                      <span class="font-semibold text-blue-700">
+                        🔄 Synchronisation en cours...
+                        <span class="text-blue-900 ml-1">{{ getSyncProgress(replication.id) }}%</span>
+                      </span>
                     </div>
 
                     <!-- Last Sync -->
@@ -1040,12 +1043,28 @@
                 </div>
               </div>
               <div class="flex-1">
-                <h4 class="text-lg font-bold text-gray-900 mb-2">Replica Existante</h4>
+                <h4 class="text-lg font-bold text-gray-900 mb-2">Replica de la Même VM Détectée</h4>
                 <p class="text-gray-700 leading-relaxed">
-                  Une VM replica <strong class="text-purple-600">{{ replicaExistsModalData.replicaName }}</strong> existe déjà sur le serveur de destination.
+                  La VM <strong class="text-blue-600">{{ replicaExistsModalData.vmName }}</strong> possède déjà une replica <strong class="text-purple-600">{{ replicaExistsModalData.replicaName }}</strong> sur le serveur de destination.
                 </p>
+                <div class="mt-3 bg-white rounded-lg p-3 border border-purple-200">
+                  <div class="flex items-center gap-2 text-sm">
+                    <svg class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="font-medium text-gray-700">VM Source :</span>
+                    <span class="text-blue-600 font-semibold">{{ replicaExistsModalData.vmName }}</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-sm mt-2">
+                    <svg class="w-5 h-5 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="font-medium text-gray-700">Replica Existante :</span>
+                    <span class="text-purple-600 font-semibold">{{ replicaExistsModalData.replicaName }}</span>
+                  </div>
+                </div>
                 <p class="text-gray-600 mt-3 text-sm">
-                  📦 Cette replica est probablement issue d'une réplication précédente. Pour continuer la nouvelle réplication, vous devez supprimer l'ancienne replica.
+                  ⚠️ Pour lancer une nouvelle réplication de <strong>{{ replicaExistsModalData.vmName }}</strong>, l'ancienne replica doit être supprimée d'abord.
                 </p>
               </div>
             </div>
@@ -1189,6 +1208,7 @@ const showReplicaExistsModal = ref(false)
 const replicaExistsModalData = ref({
   replicationId: null,
   replicaName: '',
+  vmName: '', // Nom de la VM source
   deleting: false
 })
 
@@ -1258,11 +1278,19 @@ onMounted(() => {
   // Restaurer les réplications en cours depuis le store après chargement
   setTimeout(() => {
     const activeReplications = operationsStore.getOperationsByType('replication')
+    console.log('[REPLICATION-RESTORE] Réplications actives trouvées:', activeReplications.length)
+
     if (activeReplications.length > 0) {
-      // Reprendre le polling pour chaque réplication active
+      // Reprendre le polling pour chaque réplication active (même si completed récemment)
       activeReplications.forEach(op => {
-        if (op.status === 'running' || op.status === 'starting' || op.status === 'in_progress') {
+        console.log('[REPLICATION-RESTORE] Tentative restauration:', op.id, 'Status:', op.status, 'Progress:', op.progress)
+
+        // Restaurer si pas completed/error/cancelled ET si progress < 100
+        if (!['completed', 'error', 'cancelled'].includes(op.status) || op.progress < 100) {
+          console.log('[REPLICATION-RESTORE] ✓ Restauration de la réplication', op.id)
           resumeReplication(op.id, op)
+        } else {
+          console.log('[REPLICATION-RESTORE] ✗ Skip (terminée ou annulée)')
         }
       })
     }
@@ -1449,6 +1477,18 @@ function isSyncing(replication) {
   return replication.status === 'syncing' || replicatingId.value === replication.id
 }
 
+function getSyncProgress(replicationId) {
+  // Si c'est la réplication en cours, retourner le progress actuel
+  if (replicatingId.value === replicationId) {
+    return replicationProgress.value
+  }
+
+  // Sinon, chercher dans operationsStore au cas où
+  const activeOps = operationsStore.getOperationsByType('replication')
+  const op = activeOps.find(o => o.id === replicationId)
+  return op?.progress || 0
+}
+
 async function fetchDatastores(serverId) {
   loadingDatastores.value = true
   try {
@@ -1588,20 +1628,24 @@ async function startReplication(replication) {
   if (!confirm(`Voulez-vous démarrer la réplication de ${replication.vm_name} ?`)) return
 
   try {
-    // Vérifier si une replica existe déjà
+    // TOUJOURS vérifier si une replica existe déjà AVANT chaque réplication
+    console.log('[CHECK-REPLICA] Vérification replica pour VM:', replication.vm_name)
     const checkResponse = await vmReplicationsAPI.checkReplicaExists(replication.id)
 
     if (checkResponse.data.exists) {
-      // Afficher le modal de confirmation
+      console.log('[CHECK-REPLICA] ⚠️ Replica trouvée:', checkResponse.data.replica_name)
+      // Afficher le modal de confirmation - OBLIGATOIRE pour la même VM
       replicaExistsModalData.value = {
         replicationId: replication.id,
         replicaName: checkResponse.data.replica_name,
+        vmName: replication.vm_name, // Ajouter le nom de la VM source
         deleting: false
       }
       showReplicaExistsModal.value = true
       return
     }
 
+    console.log('[CHECK-REPLICA] ✓ Aucune replica trouvée, démarrage...')
     // Pas de replica existante, continuer normalement
     await startReplicationWithoutCheck(replication)
 
@@ -1766,17 +1810,28 @@ async function startReplicationWithoutCheck(replication) {
 // Fonction pour reprendre une réplication en cours après rechargement de page
 function resumeReplication(replicationId, opData) {
   const replication = replications.value.find(r => r.id === replicationId)
-  if (!replication) return
+  if (!replication) {
+    console.warn('[REPLICATION-RESTORE] Réplication introuvable:', replicationId)
+    return
+  }
+
+  console.log('[REPLICATION-RESTORE] Restauration des données:', {
+    replicationId,
+    progress: opData.progress,
+    status: opData.status,
+    currentReplicationId: opData.currentReplicationId
+  })
 
   replicatingId.value = replicationId
-  replicationProgress.value = opData.progress
-  replicationStatus.value = opData.status
-  replicationMessage.value = opData.message
+  replicationProgress.value = opData.progress || 0
+  replicationStatus.value = opData.status || 'starting'
+  replicationMessage.value = opData.message || 'Synchronisation en cours...'
 
   // Relancer le polling pour suivre la progression
-  if (!currentReplicationId.value) {
-    // On utilise opData.id qui contient le UUID de la réplication en cours
+  if (!currentReplicationId.value && opData.currentReplicationId) {
+    // On utilise opData.currentReplicationId qui contient le UUID de la réplication en cours
     currentReplicationId.value = opData.currentReplicationId
+    console.log('[REPLICATION-RESTORE] Reprise du polling avec UUID:', opData.currentReplicationId)
 
     pollInterval = setInterval(async () => {
       try {

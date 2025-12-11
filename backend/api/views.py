@@ -3221,6 +3221,33 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 'error': result['message']
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['post'])
+    def trigger_failback(self, request, pk=None):
+        """Déclencher un failback manuel (retour à la normale)"""
+        replication = self.get_object()
+
+        # Vérifier qu'un failover est actif
+        if not replication.failover_active:
+            return Response({
+                'error': 'Aucun failover actif pour cette réplication'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Exécuter le failback via le service
+        from backups.replication_service import ReplicationService
+        service = ReplicationService()
+        result = service.execute_failback(replication, triggered_by=request.user)
+
+        if result['success']:
+            return Response({
+                'message': result['message'],
+                'master_powered_on': result.get('master_powered_on'),
+                'slave_powered_off': result.get('slave_powered_off')
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'error': result['message']
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def destroy(self, request, *args, **kwargs):
         """
         Supprimer une réplication ET la VM répliquée du serveur de destination

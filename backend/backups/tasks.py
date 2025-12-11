@@ -876,12 +876,45 @@ def execute_replication(replication_id):
             logger.warning(f"[CELERY-REPLICATION-EXEC] Réplication {replication_id} désactivée, annulation")
             return {'status': 'cancelled', 'reason': 'Replication is inactive'}
 
+        # TOUJOURS vérifier si une replica existe déjà (même VM)
+        service = ReplicationService()
+        replica_vm_name = f"{vm_name}_replica"
+
+        try:
+            dest_si = service._connect_to_server(replication.destination_server)
+            existing_replica = service._get_vm_by_name(dest_si, replica_vm_name)
+            from pyVim.connect import Disconnect
+            Disconnect(dest_si)
+
+            if existing_replica:
+                logger.warning(f"[CELERY-REPLICATION-EXEC] ⚠️ REPLICA EXISTANTE DÉTECTÉE: {replica_vm_name}")
+                logger.warning(f"[CELERY-REPLICATION-EXEC] La réplication automatique est ANNULÉE pour éviter l'écrasement")
+                logger.warning(f"[CELERY-REPLICATION-EXEC] Action requise: Supprimez manuellement la replica ou lancez une réplication manuelle")
+
+                # Envoyer une notification à l'utilisateur
+                try:
+                    EmailNotificationService.send_backup_failure_notification(
+                        vm_name=vm_name,
+                        error_message=f"Une replica '{replica_vm_name}' existe déjà sur {replication.destination_server.hostname}. "
+                                     f"Supprimez-la manuellement avant de lancer une nouvelle réplication."
+                    )
+                except Exception as email_error:
+                    logger.warning(f"[CELERY-REPLICATION-EXEC] Email notification failed: {email_error}")
+
+                return {
+                    'status': 'skipped',
+                    'reason': f'Replica {replica_vm_name} already exists on destination server. Manual deletion required.',
+                    'replication_id': replication_id
+                }
+        except Exception as check_error:
+            logger.warning(f"[CELERY-REPLICATION-EXEC] Erreur vérification replica: {check_error}")
+            # En cas d'erreur de vérification, continuer quand même (pour ne pas bloquer)
+
+        logger.info(f"[CELERY-REPLICATION-EXEC] ✓ Aucune replica existante, démarrage de la réplication...")
+
         # Mettre à jour le statut
         replication.status = 'syncing'
         replication.save()
-
-        # Exécuter la réplication via le service
-        service = ReplicationService()
 
         # Fonction de callback pour logger la progression
         def progress_callback(progress_percent, status_val, message):
@@ -1024,6 +1057,96 @@ def check_and_trigger_auto_failovers():
     logger.info(f"[CELERY-FAILOVER] Déclenchés: {triggered_count}")
     logger.info(f"[CELERY-FAILOVER] Ignorés: {skipped_count}")
     logger.info(f"[CELERY-FAILOVER] Échecs: {failed_count}")
+
+    return {
+        'triggered': triggered_count,
+        'skipped': skipped_count,
+        'failed': failed_count
+    }
+
+
+@shared_task
+def check_and_trigger_auto_failbacks():
+    """
+    Tâche périodique pour vérifier et déclencher les failbacks automatiques
+    (quand la VM master revient en ligne après un failover)
+
+    Cette tâche doit être exécutée régulièrement (ex: toutes les minutes)
+    pour détecter quand le master est revenu et déclencher le failback.
+    """
+    logger.info("[CELERY-FAILBACK] === VÉRIFICATION AUTO-FAILBACK ===")
+
+    from backups.models import VMReplication
+    from backups.replication_service import ReplicationService
+
+    # Récupérer toutes les réplications avec failover actif et failback automatique activé
+    active_failover_replications = VMReplication.objects.filter(
+        is_active=True,
+        failover_active=True,  # Failover actuellement actif
+        failback_enabled=True  # Failback automatique activé
+    )
+
+    logger.info(f"[CELERY-FAILBACK] {active_failover_replications.count()} réplication(s) en failover actif avec failback auto")
+
+    triggered_count = 0
+    skipped_count = 0
+    failed_count = 0
+
+    service = ReplicationService()
+
+    for replication in active_failover_replications:
+        try:
+            logger.info(f"[CELERY-FAILBACK] Vérification réplication {replication.id} ({replication.name})")
+
+            # Vérifier si un failback automatique doit être déclenché
+            result = service.check_and_trigger_auto_failback(replication)
+
+            if result.get('should_failback'):
+                reason = result.get('reason', 'VM master revenue en ligne')
+                logger.info(f"[CELERY-FAILBACK] ✓ DÉCLENCHEMENT AUTO-FAILBACK: {reason}")
+
+                # Exécuter le failback
+                failback_result = service.execute_failback(replication, triggered_by=None)
+
+                if failback_result['success']:
+                    triggered_count += 1
+                    logger.info(f"[CELERY-FAILBACK] ✓ Failback réussi: {failback_result['message']}")
+
+                    # Envoyer notification de succès
+                    try:
+                        EmailNotificationService.send_backup_success_notification(
+                            vm_name=replication.virtual_machine.name,
+                            backup_path=f"AUTO-FAILBACK RÉUSSI: VM {replication.virtual_machine.name} revenue sur {replication.get_source_server.hostname}"
+                        )
+                    except Exception as email_error:
+                        logger.warning(f"[CELERY-FAILBACK] Email notification failed: {email_error}")
+                else:
+                    failed_count += 1
+                    logger.error(f"[CELERY-FAILBACK] ✗ Failback échoué: {failback_result.get('error')}")
+
+                    # Envoyer notification d'échec
+                    try:
+                        EmailNotificationService.send_backup_failure_notification(
+                            vm_name=replication.virtual_machine.name,
+                            error_message=f"ÉCHEC AUTO-FAILBACK: {failback_result.get('error')}"
+                        )
+                    except Exception as email_error:
+                        logger.warning(f"[CELERY-FAILBACK] Email notification failed: {email_error}")
+            else:
+                skipped_count += 1
+                logger.info(f"[CELERY-FAILBACK] ⊘ Pas de failback nécessaire: {result.get('reason')}")
+
+        except Exception as e:
+            failed_count += 1
+            logger.error(
+                f"[CELERY-FAILBACK] ✗ Erreur vérification failback {replication.id}: {e}",
+                exc_info=True
+            )
+
+    logger.info("[CELERY-FAILBACK] === RÉSUMÉ ===")
+    logger.info(f"[CELERY-FAILBACK] Déclenchés: {triggered_count}")
+    logger.info(f"[CELERY-FAILBACK] Ignorés: {skipped_count}")
+    logger.info(f"[CELERY-FAILBACK] Échecs: {failed_count}")
 
     return {
         'triggered': triggered_count,
