@@ -8,7 +8,6 @@ from .views import (
     NotificationConfigViewSet, NotificationLogViewSet, HealthMonitoringViewSet,
     OVFExportJobViewSet, VMBackupJobViewSet, StoragePathViewSet,
     VMReplicationViewSet, FailoverEventViewSet,
-    BackupVerificationViewSet, BackupVerificationScheduleViewSet,
     EmailSettingsViewSet,
     login_view, logout_view, current_user_view, prometheus_metrics
 )
@@ -34,8 +33,9 @@ router.register(r'vm-backups', VMBackupJobViewSet, basename='vm-backups')
 router.register(r'storage-paths', StoragePathViewSet, basename='storage-paths')
 router.register(r'vm-replications', VMReplicationViewSet, basename='vm-replications')
 router.register(r'failover-events', FailoverEventViewSet, basename='failover-events')
-router.register(r'backup-verifications', BackupVerificationViewSet, basename='backup-verifications')
-router.register(r'verification-schedules', BackupVerificationScheduleViewSet, basename='verification-schedules')
+# REMOVED: SureBackup routes (module supprimé)
+# router.register(r'backup-verifications', BackupVerificationViewSet, basename='backup-verifications')
+# router.register(r'verification-schedules', BackupVerificationScheduleViewSet, basename='verification-schedules')
 router.register(r'email-settings', EmailSettingsViewSet, basename='email-settings')
 
 urlpatterns = [
