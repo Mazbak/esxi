@@ -184,7 +184,7 @@
       <form @submit.prevent="handleCreate" class="space-y-4">
         <div>
           <label class="label">Machine virtuelle <span class="text-red-500">*</span></label>
-          <select v-model="form.virtual_machine" required class="input-field" :disabled="creating">
+          <select v-model="form.virtual_machine" @change="onVMChange" required class="input-field" :disabled="creating">
             <option value="">Sélectionnez une VM</option>
             <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">
               {{ vm.name }} ({{ vm.guest_os }})
@@ -288,6 +288,74 @@
         </button>
       </template>
     </Modal>
+
+    <!-- Power Warning Modal -->
+    <div v-if="showPowerWarning" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click.self="closePowerWarning">
+      <div class="bg-white rounded-lg shadow-2xl max-w-lg w-full mx-4">
+        <div class="p-6">
+          <div class="flex items-center gap-4 mb-4">
+            <div class="flex-shrink-0 w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center">
+              <svg class="w-6 h-6 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <h3 class="text-xl font-bold text-gray-900">⚠️ VM en fonctionnement</h3>
+          </div>
+
+          <div class="space-y-4 mb-6">
+            <p class="text-gray-700">
+              La machine virtuelle <strong>{{ selectedVMName }}</strong> est actuellement <strong class="text-green-600">allumée</strong>.
+            </p>
+
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p class="text-sm text-blue-900 font-medium mb-2">💡 Recommandation :</p>
+              <p class="text-sm text-blue-800">
+                Pour garantir l'intégrité et la cohérence de la sauvegarde, il est fortement recommandé d'éteindre la VM avant de procéder.
+              </p>
+            </div>
+
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <p class="text-sm text-yellow-900 font-medium mb-2">⚠️ Risques si vous continuez sans éteindre :</p>
+              <ul class="text-sm text-yellow-800 list-disc list-inside space-y-1">
+                <li>Incohérence des données en cours d'écriture</li>
+                <li>Corruption potentielle de la sauvegarde</li>
+                <li>Restauration incomplète possible</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <button
+              @click="powerOffAndExport"
+              :disabled="poweringOff"
+              class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-lg transition-colors"
+            >
+              <svg v-if="poweringOff" class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>{{ poweringOff ? 'Extinction en cours...' : '✅ Éteindre la VM puis sauvegarder' }}</span>
+            </button>
+
+            <button
+              @click="continueWithoutPowerOff"
+              :disabled="poweringOff"
+              class="w-full px-4 py-3 bg-yellow-500 hover:bg-yellow-600 disabled:bg-yellow-300 text-white font-semibold rounded-lg transition-colors"
+            >
+              ⚠️ Continuer sans éteindre (non recommandé)
+            </button>
+
+            <button
+              @click="closePowerWarning"
+              :disabled="poweringOff"
+              class="w-full px-4 py-3 bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-700 font-semibold rounded-lg transition-colors"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -306,6 +374,9 @@ const toast = useToastStore()
 const showCreateModal = ref(false)
 const creating = ref(false)  // Local loading state for modal
 const storagePaths = ref([])  // Chemins de sauvegarde prédéfinis
+const showPowerWarning = ref(false)
+const poweringOff = ref(false)
+const selectedVM = ref(null)
 const form = ref({
   virtual_machine: '',
   export_format: 'ova',  // OVA par défaut (recommandé)
@@ -327,6 +398,8 @@ const stats = computed(() => {
     failed: exports.value.filter(e => e.status === 'failed').length,
   }
 })
+
+const selectedVMName = computed(() => selectedVM.value?.name || '')
 
 // Exports avec progression réelle du backend (arrondis à l'entier)
 const exportsWithProgress = computed(() => {
@@ -384,7 +457,30 @@ onUnmounted(() => {
   stopStatusCheck()
 })
 
+// Vérifier l'état de la VM sélectionnée
+function onVMChange() {
+  if (form.value.virtual_machine) {
+    selectedVM.value = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
+    console.log('🔄 OVFExport - VM sélectionnée:', selectedVM.value)
+    console.log('🔄 OVFExport - power_state:', selectedVM.value?.power_state)
+  } else {
+    selectedVM.value = null
+  }
+}
+
 async function handleCreate() {
+  // Vérifier si la VM est allumée
+  if (selectedVM.value && selectedVM.value.power_state === 'poweredOn') {
+    console.log('⚠️ VM allumée détectée, affichage du modal d\'avertissement')
+    showPowerWarning.value = true
+    return
+  }
+
+  console.log('✅ VM éteinte ou état inconnu, démarrage de l\'export')
+  await executeExport()
+}
+
+async function executeExport() {
   creating.value = true
   try {
     await vmOpsStore.createOVFExport(form.value)
@@ -394,12 +490,13 @@ async function handleCreate() {
     creating.value = false
 
     // Notification de succès
-    const selectedVM = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
-    const vmName = selectedVM ? selectedVM.name : 'VM'
+    const selectedVMData = virtualMachines.value.find(vm => vm.id === form.value.virtual_machine)
+    const vmName = selectedVMData ? selectedVMData.name : 'VM'
     toast.success(`💾 Sauvegarde de "${vmName}" démarrée avec succès ! Suivez la progression ci-dessous.`, 5000)
 
     // Reset form
     form.value = { virtual_machine: '', export_format: 'ova', export_location: '/mnt/exports' }
+    selectedVM.value = null
 
     // Rafraîchir la liste pour obtenir le nouvel export
     await vmOpsStore.fetchOVFExports()
@@ -414,6 +511,50 @@ async function handleCreate() {
     // Error toast is already shown by the store
     // Keep modal open to let user fix the issue or close manually
   }
+}
+
+// Éteindre la VM puis lancer l'export
+async function powerOffAndExport() {
+  poweringOff.value = true
+
+  try {
+    console.log('🔌 Extinction de la VM:', selectedVM.value.id)
+    const response = await esxiStore.powerOffVM(selectedVM.value.id)
+
+    if (response.success) {
+      toast.success(`✅ VM "${selectedVM.value.name}" éteinte avec succès`, 3000)
+
+      // Attendre 3 secondes pour que l'extinction soit effective
+      await new Promise(resolve => setTimeout(resolve, 3000))
+
+      // Fermer le modal d'avertissement
+      showPowerWarning.value = false
+      poweringOff.value = false
+
+      // Lancer l'export
+      await executeExport()
+    } else {
+      throw new Error(response.message || 'Échec de l\'extinction de la VM')
+    }
+  } catch (error) {
+    console.error('❌ Erreur extinction VM:', error)
+    toast.error(error.response?.data?.error || error.message || 'Erreur lors de l\'extinction de la VM')
+    poweringOff.value = false
+  }
+}
+
+// Continuer sans éteindre la VM
+async function continueWithoutPowerOff() {
+  console.log('⚠️ Utilisateur continue sans éteindre la VM')
+  showPowerWarning.value = false
+  await executeExport()
+}
+
+// Fermer le modal d'avertissement
+function closePowerWarning() {
+  console.log('❌ Utilisateur annule l\'export')
+  showPowerWarning.value = false
+  poweringOff.value = false
 }
 
 async function cancelExport(id) {
