@@ -711,7 +711,8 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             from backups.models import VMReplication
 
-            vm_size_gb = vm.provisioned_space / (1024 ** 3) if vm.provisioned_space else 0
+            # Utiliser disk_gb au lieu de provisioned_space
+            vm_size_gb = vm.disk_gb if vm.disk_gb else 0
             min_interval = VMReplication.calculate_minimum_interval(vm_size_gb)
 
             # Déterminer la catégorie
