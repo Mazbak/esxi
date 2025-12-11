@@ -3142,8 +3142,17 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             # Calculer le prochain sync
             next_sync = None
             if replication.is_active and replication.last_replication_at:
+                # Calculer combien d'intervalles se sont écoulés depuis la dernière sync
+                now = timezone.now()
+                elapsed = now - replication.last_replication_at
+                interval_seconds = replication.replication_interval_minutes * 60
+
+                # Calculer combien d'intervalles complets se sont écoulés
+                intervals_elapsed = int(elapsed.total_seconds() / interval_seconds)
+
+                # Calculer le prochain sync futur (pas dans le passé)
                 next_sync = replication.last_replication_at + timezone.timedelta(
-                    minutes=replication.replication_interval_minutes
+                    seconds=(intervals_elapsed + 1) * interval_seconds
                 )
 
             # Calculer le temps jusqu'au prochain sync

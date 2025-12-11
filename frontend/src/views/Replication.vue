@@ -1479,9 +1479,14 @@ function getNextSyncCountdown(replication) {
   const now = new Date()
   const diffSeconds = Math.floor((nextSync - now) / 1000)
 
-  // Si en retard ou très proche (< 30 secondes)
+  // Si en retard (dans le passé)
+  if (diffSeconds < 0) {
+    return { text: 'En cours...', color: 'text-blue-600 animate-pulse', isImminent: true }
+  }
+
+  // Si très proche (< 30 secondes)
   if (diffSeconds < 30) {
-    return { text: 'Imminent', color: 'text-green-600 animate-pulse', isImminent: true }
+    return { text: 'Imminent (< 30s)', color: 'text-green-600 animate-pulse', isImminent: true }
   }
 
   // Afficher en minutes et secondes
@@ -1491,7 +1496,7 @@ function getNextSyncCountdown(replication) {
   if (minutes > 0) {
     return {
       text: `Dans ${minutes}m ${seconds}s`,
-      color: minutes <= 2 ? 'text-orange-500' : 'text-gray-700',
+      color: minutes <= 2 ? 'text-orange-500 font-medium' : 'text-gray-700',
       isImminent: minutes <= 2
     }
   } else {
