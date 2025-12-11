@@ -1694,7 +1694,17 @@ async function saveReplication() {
 
 function editReplication(replication) {
   editingReplication.value = replication
-  form.value = { ...replication }
+  // Ne copier que les champs modifiables, pas les champs read-only
+  form.value = {
+    name: replication.name,
+    virtual_machine: replication.virtual_machine,
+    destination_server: replication.destination_server,
+    destination_datastore: replication.destination_datastore,
+    replication_interval_minutes: replication.replication_interval_minutes,
+    failover_mode: replication.failover_mode,
+    auto_failover_threshold_minutes: replication.auto_failover_threshold_minutes,
+    is_active: replication.is_active
+  }
   showCreateModal.value = true
 }
 
