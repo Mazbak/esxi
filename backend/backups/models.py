@@ -1255,6 +1255,16 @@ class VMReplication(models.Model):
         help_text="Réplication active"
     )
 
+    failover_active = models.BooleanField(
+        default=False,
+        help_text="Failover actuellement actif (VM master arrêtée, slave active)"
+    )
+
+    failback_enabled = models.BooleanField(
+        default=True,
+        help_text="Activer le failback automatique quand master revient"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
