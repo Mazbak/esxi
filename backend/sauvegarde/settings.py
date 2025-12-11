@@ -41,7 +41,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
-    'django_celery_beat',  # Celery Beat scheduler
      # Tes apps
     'esxi',        # 👈 Ajoute cette ligne
     'backups',     # 👈 Si tu as aussi cette app
