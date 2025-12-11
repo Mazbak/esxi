@@ -214,25 +214,29 @@ ESXi Backup Manager
         return EmailNotificationService.send_email(subject, message, html_message)
 
     @staticmethod
-    def send_surebackup_success_notification(vm_name, verification_details):
-        """Send notification for successful SureBackup verification"""
+    def send_restore_success_notification(vm_name, restore_path, duration_seconds=None):
+        """Send notification for successful restore"""
         email_settings = EmailNotificationService.get_email_settings()
-        if not email_settings or not email_settings.notify_surebackup_success:
+        if not email_settings or not email_settings.notify_restore_success:
             return False
 
-        subject = f"✅ Vérification SureBackup réussie - {vm_name}"
+        subject = f"✅ Restauration réussie - {vm_name}"
+
+        duration_text = ""
+        if duration_seconds:
+            minutes = int(duration_seconds // 60)
+            seconds = int(duration_seconds % 60)
+            duration_text = f"\nDurée: {minutes}m {seconds}s"
 
         message = f"""
-Vérification SureBackup réussie
-================================
+Restauration réussie
+====================
 
 Machine virtuelle: {vm_name}
+Chemin de restauration: {restore_path}{duration_text}
 Date: {EmailNotificationService._get_current_datetime()}
 
-Détails de la vérification:
-{verification_details}
-
-La vérification SureBackup a été complétée avec succès.
+La restauration a été complétée avec succès.
 
 ---
 ESXi Backup Manager
@@ -243,16 +247,14 @@ ESXi Backup Manager
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                 <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
                     <h2 style="color: #10b981; border-bottom: 2px solid #10b981; padding-bottom: 10px;">
-                        ✅ Vérification SureBackup réussie
+                        ✅ Restauration réussie
                     </h2>
                     <p><strong>Machine virtuelle:</strong> {vm_name}</p>
+                    <p><strong>Chemin de restauration:</strong> <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">{restore_path}</code></p>
+                    {f'<p><strong>Durée:</strong> {minutes}m {seconds}s</p>' if duration_seconds else ''}
                     <p><strong>Date:</strong> {EmailNotificationService._get_current_datetime()}</p>
-                    <div style="margin-top: 20px; padding: 15px; background-color: #f3f4f6; border-radius: 4px;">
-                        <p style="margin: 0 0 10px 0;"><strong>Détails de la vérification:</strong></p>
-                        <pre style="margin: 0; white-space: pre-wrap; font-family: monospace; font-size: 13px;">{verification_details}</pre>
-                    </div>
                     <div style="margin-top: 20px; padding: 15px; background-color: #d1fae5; border-left: 4px solid #10b981; border-radius: 4px;">
-                        <p style="margin: 0;">La vérification SureBackup a été complétée avec succès.</p>
+                        <p style="margin: 0;">La restauration a été complétée avec succès.</p>
                     </div>
                     <hr style="margin: 20px 0; border: none; border-top: 1px solid #e0e0e0;">
                     <p style="color: #6b7280; font-size: 12px; text-align: center;">ESXi Backup Manager</p>
@@ -264,23 +266,23 @@ ESXi Backup Manager
         return EmailNotificationService.send_email(subject, message, html_message)
 
     @staticmethod
-    def send_surebackup_failure_notification(vm_name, error_message):
-        """Send notification for failed SureBackup verification"""
+    def send_restore_failure_notification(vm_name, error_message):
+        """Send notification for failed restore"""
         email_settings = EmailNotificationService.get_email_settings()
-        if not email_settings or not email_settings.notify_surebackup_failure:
+        if not email_settings or not email_settings.notify_restore_failure:
             return False
 
-        subject = f"❌ Échec de vérification SureBackup - {vm_name}"
+        subject = f"❌ Échec de restauration - {vm_name}"
 
         message = f"""
-Échec de vérification SureBackup
-=================================
+Échec de restauration
+=====================
 
 Machine virtuelle: {vm_name}
 Erreur: {error_message}
 Date: {EmailNotificationService._get_current_datetime()}
 
-La vérification SureBackup a échoué. Veuillez vérifier les logs pour plus de détails.
+La restauration a échoué. Veuillez vérifier les logs pour plus de détails.
 
 ---
 ESXi Backup Manager
@@ -291,7 +293,7 @@ ESXi Backup Manager
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                 <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
                     <h2 style="color: #ef4444; border-bottom: 2px solid #ef4444; padding-bottom: 10px;">
-                        ❌ Échec de vérification SureBackup
+                        ❌ Échec de restauration
                     </h2>
                     <p><strong>Machine virtuelle:</strong> {vm_name}</p>
                     <p><strong>Date:</strong> {EmailNotificationService._get_current_datetime()}</p>
@@ -300,7 +302,61 @@ ESXi Backup Manager
                         <p style="margin: 5px 0 0 0; font-family: monospace; background: #fff; padding: 10px; border-radius: 4px;">{error_message}</p>
                     </div>
                     <div style="margin-top: 20px; padding: 15px; background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px;">
-                        <p style="margin: 0;">⚠️ La vérification SureBackup a échoué. Veuillez vérifier les logs pour plus de détails.</p>
+                        <p style="margin: 0;">⚠️ La restauration a échoué. Veuillez vérifier les logs pour plus de détails.</p>
+                    </div>
+                    <hr style="margin: 20px 0; border: none; border-top: 1px solid #e0e0e0;">
+                    <p style="color: #6b7280; font-size: 12px; text-align: center;">ESXi Backup Manager</p>
+                </div>
+            </body>
+        </html>
+        """
+
+        return EmailNotificationService.send_email(subject, message, html_message)
+
+    @staticmethod
+    def send_replication_success_notification(vm_name, source_server, destination_server, duration_seconds=None):
+        """Send notification for successful replication"""
+        email_settings = EmailNotificationService.get_email_settings()
+        if not email_settings or not email_settings.notify_replication_success:
+            return False
+
+        subject = f"✅ Réplication réussie - {vm_name}"
+
+        duration_text = ""
+        if duration_seconds:
+            minutes = int(duration_seconds // 60)
+            seconds = int(duration_seconds % 60)
+            duration_text = f"\nDurée: {minutes}m {seconds}s"
+
+        message = f"""
+Réplication réussie
+===================
+
+Machine virtuelle: {vm_name}
+Serveur source: {source_server}
+Serveur destination: {destination_server}{duration_text}
+Date: {EmailNotificationService._get_current_datetime()}
+
+La réplication a été complétée avec succès.
+
+---
+ESXi Backup Manager
+        """.strip()
+
+        html_message = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+                    <h2 style="color: #10b981; border-bottom: 2px solid #10b981; padding-bottom: 10px;">
+                        ✅ Réplication réussie
+                    </h2>
+                    <p><strong>Machine virtuelle:</strong> {vm_name}</p>
+                    <p><strong>Serveur source:</strong> {source_server}</p>
+                    <p><strong>Serveur destination:</strong> {destination_server}</p>
+                    {f'<p><strong>Durée:</strong> {minutes}m {seconds}s</p>' if duration_seconds else ''}
+                    <p><strong>Date:</strong> {EmailNotificationService._get_current_datetime()}</p>
+                    <div style="margin-top: 20px; padding: 15px; background-color: #d1fae5; border-left: 4px solid #10b981; border-radius: 4px;">
+                        <p style="margin: 0;">La réplication a été complétée avec succès.</p>
                     </div>
                     <hr style="margin: 20px 0; border: none; border-top: 1px solid #e0e0e0;">
                     <p style="color: #6b7280; font-size: 12px; text-align: center;">ESXi Backup Manager</p>
