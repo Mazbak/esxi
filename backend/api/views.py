@@ -672,19 +672,28 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
 
             # Connexion
             if vmware.connect():
-                # Obtenir la VM depuis ESXi
-                vm_obj = vmware.get_vm_by_id(vm.vm_id)
+                logger.info(f"[RETRIEVE] Connexion ESXi réussie pour récupérer état de {vm.name}")
+
+                # Obtenir la VM depuis ESXi par UUID
+                vm_obj = vmware._find_vm_by_uuid(vm.vm_id)
                 if vm_obj:
-                    # Mettre à jour le power_state avec l'état réel
+                    # Récupérer le power_state en temps réel
                     real_power_state = str(vm_obj.runtime.powerState)
+                    logger.info(f"[RETRIEVE] Power state temps réel de {vm.name}: {real_power_state}")
+
+                    # Mettre à jour le power_state dans la base de données
                     vm.power_state = real_power_state
                     vm.save(update_fields=['power_state'])
-                    logger.info(f"Power state mis à jour pour VM {vm.name}: {real_power_state}")
+                    logger.info(f"[RETRIEVE] Power state mis à jour en BDD pour {vm.name}: {real_power_state}")
+                else:
+                    logger.warning(f"[RETRIEVE] VM {vm.name} (UUID: {vm.vm_id}) introuvable sur ESXi")
 
                 # Déconnexion
                 vmware.disconnect()
+            else:
+                logger.error(f"[RETRIEVE] Impossible de se connecter au serveur {server.hostname}")
         except Exception as e:
-            logger.warning(f"Impossible de récupérer l'état en temps réel pour {vm.name}: {e}")
+            logger.exception(f"[RETRIEVE] Erreur récupération état temps réel pour {vm.name}: {e}")
             # Continuer avec les données de la base si erreur
 
         # Utiliser le serializer standard
