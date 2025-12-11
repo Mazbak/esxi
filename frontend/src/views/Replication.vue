@@ -1318,6 +1318,30 @@ watch(() => form.value.destination_server, async (newServerId) => {
   await fetchDatastores(newServerId)
 })
 
+// Watch VM selection to auto-calculate minimum interval
+watch(() => form.value.virtual_machine, async (newVmId) => {
+  if (!newVmId) return
+
+  try {
+    const response = await virtualMachinesAPI.getMinimumInterval(newVmId)
+    const minInterval = response.data.minimum_interval_minutes
+    const vmSize = response.data.vm_size_gb
+    const category = response.data.category
+
+    console.log(`[AUTO-INTERVAL] VM sélectionnée: ${vmSize} GB (${category}) → Intervalle minimum: ${minInterval} min`)
+
+    // Auto-remplir l'intervalle avec le minimum recommandé
+    form.value.replication_interval_minutes = minInterval
+
+    // Afficher un toast informatif
+    toast.info(`Intervalle auto-calculé: ${minInterval} min pour une VM de ${vmSize} GB`, { duration: 4000 })
+
+  } catch (error) {
+    console.error('[AUTO-INTERVAL] Erreur calcul intervalle:', error)
+    // Garder la valeur par défaut de 60 en cas d'erreur
+  }
+})
+
 onMounted(() => {
   fetchData()
 
@@ -1653,10 +1677,16 @@ async function saveReplication() {
         toast.error(`Serveur de destination invalide: ${errors.destination_server[0]}`)
         return
       }
+
+      // Erreur d'intervalle trop court
+      if (errors.replication_interval_minutes) {
+        toast.error(`⚠️ ${errors.replication_interval_minutes[0]}`, { duration: 6000 })
+        return
+      }
     }
 
     // Erreur générique
-    toast.error('Erreur, la VM sélectionnée est déjà répliquée sur ce serveur')
+    toast.error('Erreur lors de la sauvegarde de la réplication')
   } finally {
     saving.value = false
   }

@@ -73,6 +73,7 @@ export const virtualMachinesAPI = {
   removeAllSnapshots: (id) => apiClient.post(`/virtual-machines/${id}/remove_all_snapshots/`),
   powerOff: (id) => apiClient.post(`/virtual-machines/${id}/power_off/`),
   powerOn: (id) => apiClient.post(`/virtual-machines/${id}/power_on/`),
+  getMinimumInterval: (id) => apiClient.get(`/virtual-machines/${id}/get_minimum_interval/`),
 }
 
 // ===========================
