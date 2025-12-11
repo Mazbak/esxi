@@ -354,6 +354,8 @@ async function onVMChange() {
   // Récupérer les informations de la VM sélectionnée
   if (form.virtual_machine) {
     selectedVM.value = virtualMachines.value.find(vm => vm.id === form.virtual_machine)
+    console.log('🔄 onVMChange - VM sélectionnée:', selectedVM.value)
+    console.log('🔄 onVMChange - power_state:', selectedVM.value?.power_state)
   } else {
     selectedVM.value = null
   }
@@ -411,13 +413,19 @@ onMounted(() => {
 function handleSubmit() {
   error.value = null
 
+  // Debug logs
+  console.log('🔍 handleSubmit - selectedVM:', selectedVM.value)
+  console.log('🔍 handleSubmit - power_state:', selectedVM.value?.power_state)
+
   // Vérifier si la VM est allumée
   if (selectedVM.value && selectedVM.value.power_state === 'poweredOn') {
+    console.log('⚠️ VM est allumée, affichage du modal')
     // Afficher le modal d'avertissement
     showPowerWarning.value = true
     return
   }
 
+  console.log('✅ VM est éteinte ou état inconnu, soumission normale')
   // Si la VM est éteinte ou si on ne peut pas déterminer son état, continuer normalement
   submitBackup()
 }
