@@ -630,7 +630,7 @@
                 <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Intervalle (minutes)
+                Intervalle entre les synchronisations (minutes)
               </label>
               <input
                 v-model.number="form.replication_interval_minutes"
@@ -1479,9 +1479,14 @@ function getNextSyncCountdown(replication) {
   const now = new Date()
   const diffSeconds = Math.floor((nextSync - now) / 1000)
 
-  // Si en retard ou très proche (< 30 secondes)
+  // Si en retard (dans le passé)
+  if (diffSeconds < 0) {
+    return { text: 'En cours...', color: 'text-blue-600 animate-pulse', isImminent: true }
+  }
+
+  // Si très proche (< 30 secondes)
   if (diffSeconds < 30) {
-    return { text: 'Imminent', color: 'text-green-600 animate-pulse', isImminent: true }
+    return { text: 'Imminent (< 30s)', color: 'text-green-600 animate-pulse', isImminent: true }
   }
 
   // Afficher en minutes et secondes
@@ -1491,7 +1496,7 @@ function getNextSyncCountdown(replication) {
   if (minutes > 0) {
     return {
       text: `Dans ${minutes}m ${seconds}s`,
-      color: minutes <= 2 ? 'text-orange-500' : 'text-gray-700',
+      color: minutes <= 2 ? 'text-orange-500 font-medium' : 'text-gray-700',
       isImminent: minutes <= 2
     }
   } else {
