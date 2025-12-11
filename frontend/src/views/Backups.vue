@@ -236,6 +236,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useVMOperationsStore } from '@/stores/vmOperations'
+import { useOperationsStore } from '@/stores/operations'  // Store de persistance
 import { useEsxiStore } from '@/stores/esxi'
 import { useToastStore } from '@/stores/toast'
 import { format } from 'date-fns'
@@ -244,6 +245,7 @@ import Loading from '@/components/common/Loading.vue'
 import BackupJobForm from '@/components/backups/BackupJobForm.vue'
 
 const vmOpsStore = useVMOperationsStore()
+const operationsStore = useOperationsStore()  // Store de persistance
 const esxiStore = useEsxiStore()
 const toast = useToastStore()
 
@@ -285,10 +287,35 @@ const filteredJobs = computed(() => {
 let refreshInterval = null
 
 onMounted(async () => {
+  // Charger les données initiales
   await Promise.all([
     vmOpsStore.fetchVMBackups(),
     esxiStore.fetchVirtualMachines()
   ])
+
+  // Restaurer les backups en cours depuis le store de persistance
+  setTimeout(() => {
+    const activeBackups = operationsStore.getOperationsByType('backup')
+    console.log('[BACKUP-RESTORE] Backups actifs trouvés dans le store:', activeBackups.length)
+
+    if (activeBackups.length > 0) {
+      activeBackups.forEach(op => {
+        console.log('[BACKUP-RESTORE] Backup actif:', op.id, 'Status:', op.status, 'Progress:', op.progress)
+
+        // Vérifier si le job existe encore dans la liste
+        const job = jobs.value.find(j => j.id === op.id)
+        if (!job) {
+          console.log('[BACKUP-RESTORE] Job introuvable, suppression du store')
+          operationsStore.removeOperation('backup', op.id)
+        } else if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+          console.log('[BACKUP-RESTORE] Job terminé, suppression du store')
+          operationsStore.removeOperation('backup', op.id)
+        } else {
+          console.log('[BACKUP-RESTORE] ✓ Job toujours actif, barre de progression restaurée')
+        }
+      })
+    }
+  }, 500)
 
   // Auto-refresh pour les jobs en cours ou en attente
   refreshInterval = setInterval(async () => {
@@ -315,6 +342,7 @@ onUnmounted(() => {
 })
 
 // Watcher pour détecter les jobs échoués et afficher l'erreur dans un toast
+// ET pour sauvegarder les jobs actifs dans le operationsStore
 watch(jobs, (newJobs) => {
   newJobs.forEach(job => {
     // Si le job a échoué et qu'on ne l'a pas encore notifié
@@ -324,6 +352,23 @@ watch(jobs, (newJobs) => {
       // Afficher l'erreur dans un toast
       const errorMsg = job.error_message || 'Une erreur est survenue lors de la sauvegarde'
       toast.error(`❌ Sauvegarde échouée: ${errorMsg}`, 10000) // 10 secondes pour laisser le temps de lire
+
+      // Retirer du store de persistance
+      operationsStore.removeOperation('backup', job.id)
+    }
+
+    // Sauvegarder dans le store de persistance si job actif
+    if (job.status === 'running' || job.status === 'pending') {
+      operationsStore.setOperation('backup', job.id, {
+        status: job.status,
+        progress: job.progress || 0,
+        vm_name: job.virtual_machine_name || job.virtual_machine?.name,
+        type_display: job.backup_type,
+        message: `Sauvegarde ${job.backup_type} en cours...`
+      })
+    } else if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+      // Retirer du store si terminé
+      operationsStore.removeOperation('backup', job.id)
     }
   })
 }, { deep: true })
