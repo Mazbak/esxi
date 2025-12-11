@@ -261,8 +261,9 @@
                     </div>
 
                     <!-- Duration if available -->
-                    <div v-if="replication.last_replication_duration_seconds" class="text-xs text-gray-400">
-                      ⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}
+                    <div v-if="replication.last_replication_duration_seconds" class="text-xs text-gray-500">
+                      <span class="text-gray-400">Durée dernière sync:</span>
+                      <span class="font-medium ml-1">⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}</span>
                     </div>
                   </div>
                 </td>
@@ -272,10 +273,24 @@
                   <span :class="getStatusClass(replication.status)" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
                     {{ replication.status_display }}
                   </span>
-                  <div v-if="replication.failover_mode === 'automatic'" class="mt-1">
-                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                      Auto-Failover
-                    </span>
+
+                  <!-- Failover Status -->
+                  <div class="mt-1 space-y-1">
+                    <div v-if="replication.failover_active" class="flex items-center gap-1">
+                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                        ⚡ Failover Actif
+                      </span>
+                    </div>
+                    <div v-else-if="replication.failover_mode === 'automatic'">
+                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                        ✅ Normal (Auto)
+                      </span>
+                    </div>
+                    <div v-else-if="replication.failover_mode === 'manual'">
+                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-700">
+                        🔧 Manuel
+                      </span>
+                    </div>
                   </div>
                 </td>
 
@@ -297,7 +312,9 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </button>
+                  <!-- Failover button (only if failover NOT active) -->
                   <button
+                    v-if="!replication.failover_active"
                     @click="showFailoverModal(replication)"
                     :disabled="!replication.is_active"
                     class="text-orange-600 hover:text-orange-900 disabled:text-gray-400"
@@ -307,6 +324,19 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                   </button>
+
+                  <!-- Failback button (only if failover IS active) -->
+                  <button
+                    v-if="replication.failover_active"
+                    @click="triggerFailback(replication)"
+                    class="text-green-600 hover:text-green-900"
+                    title="Failback - Retour à la normale"
+                  >
+                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                  </button>
+
                   <button
                     @click="editReplication(replication)"
                     class="text-indigo-600 hover:text-indigo-900"
@@ -2134,6 +2164,30 @@ async function performFailover() {
   } catch (error) {
     console.error('Erreur failover:', error)
     toast.error('Le basculement a échoué')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function triggerFailback(replication) {
+  if (!confirm(
+    `🔄 Retour à la normale ?\n\n` +
+    `Cette action va :\n` +
+    `✅ Rallumer la VM master: ${replication.vm_name} sur ${replication.source_server_name}\n` +
+    `🛑 Arrêter la VM slave sur ${replication.destination_server_name}\n\n` +
+    `Confirmer le failback ?`
+  )) return
+
+  saving.value = true
+  try {
+    const response = await vmReplicationsAPI.performFailback(replication.id)
+    toast.success('✅ Failback réussi - Retour à la normale')
+    console.log('[FAILBACK] Succès:', response.data)
+    fetchData()
+    fetchAllVMStates()
+  } catch (error) {
+    console.error('Erreur failback:', error)
+    toast.error(`❌ Erreur failback: ${error.response?.data?.error || error.message}`)
   } finally {
     saving.value = false
   }
