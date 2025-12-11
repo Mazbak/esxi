@@ -63,19 +63,9 @@ const router = createRouter({
           component: () => import('@/views/Replication.vue'),
         },
         {
-          path: 'surebackup',
-          name: 'surebackup',
-          component: () => import('@/views/SureBackup.vue'),
-        },
-        {
           path: 'schedules',
           name: 'schedules',
           component: () => import('@/views/Schedules.vue'),
-        },
-        {
-          path: 'monitoring',
-          name: 'monitoring',
-          component: () => import('@/views/Monitoring.vue'),
         },
         {
           path: 'settings',
