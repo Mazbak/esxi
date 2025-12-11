@@ -124,6 +124,27 @@ export const useEsxiStore = defineStore('esxi', () => {
     }
   }
 
+  async function powerOffVM(vmId) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await virtualMachinesAPI.powerOff(vmId)
+
+      // Mettre à jour le power_state de la VM dans le store
+      const vm = virtualMachines.value.find(v => v.id === vmId)
+      if (vm) {
+        vm.power_state = 'poweredOff'
+      }
+
+      return response.data
+    } catch (err) {
+      error.value = err.response?.data?.error || err.response?.data?.message || 'Erreur lors de l\'extinction de la VM'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
   // ===========================
   // DATASTORES
   // ===========================
@@ -154,6 +175,7 @@ export const useEsxiStore = defineStore('esxi', () => {
     testConnection,
     syncVMs,
     fetchVirtualMachines,
+    powerOffVM,
     fetchDatastores,
   }
 })
