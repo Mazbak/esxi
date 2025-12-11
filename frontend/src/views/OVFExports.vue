@@ -338,14 +338,6 @@
             </button>
 
             <button
-              @click="continueWithoutPowerOff"
-              :disabled="poweringOff"
-              class="w-full px-4 py-3 bg-yellow-500 hover:bg-yellow-600 disabled:bg-yellow-300 text-white font-semibold rounded-lg transition-colors"
-            >
-              ⚠️ Continuer sans éteindre (non recommandé)
-            </button>
-
-            <button
               @click="closePowerWarning"
               :disabled="poweringOff"
               class="w-full px-4 py-3 bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-700 font-semibold rounded-lg transition-colors"
@@ -484,9 +476,31 @@ async function onVMChange() {
 }
 
 async function handleCreate() {
+  // Valider tous les champs obligatoires
+  if (!form.value.virtual_machine) {
+    toast.error('Veuillez sélectionner une machine virtuelle')
+    return
+  }
+  if (!form.value.export_format) {
+    toast.error('Veuillez sélectionner un format de sauvegarde')
+    return
+  }
+  if (!form.value.export_location || form.value.export_location.trim() === '') {
+    toast.error('Veuillez saisir un emplacement de sauvegarde')
+    return
+  }
+
   // Vérifier si la VM est allumée
   if (selectedVM.value && selectedVM.value.power_state === 'poweredOn') {
     console.log('⚠️ VM allumée détectée, affichage du modal d\'avertissement')
+
+    // Fermer le modal de création AVANT d'afficher le modal d'avertissement
+    showCreateModal.value = false
+
+    // Attendre un peu pour que l'animation de fermeture se termine
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    // Afficher le modal d'avertissement
     showPowerWarning.value = true
     return
   }
@@ -558,18 +572,16 @@ async function powerOffAndExport() {
   }
 }
 
-// Continuer sans éteindre la VM
-async function continueWithoutPowerOff() {
-  console.log('⚠️ Utilisateur continue sans éteindre la VM')
-  showPowerWarning.value = false
-  await executeExport()
-}
-
-// Fermer le modal d'avertissement
+// Fermer le modal d'avertissement et rouvrir le modal de création
 function closePowerWarning() {
   console.log('❌ Utilisateur annule l\'export')
   showPowerWarning.value = false
   poweringOff.value = false
+
+  // Rouvrir le modal de création
+  setTimeout(() => {
+    showCreateModal.value = true
+  }, 100)
 }
 
 async function cancelExport(id) {
