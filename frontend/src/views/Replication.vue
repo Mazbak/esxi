@@ -265,6 +265,14 @@
                       <span class="text-gray-400">Durée dernière sync:</span>
                       <span class="font-medium ml-1">⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}</span>
                     </div>
+
+                    <!-- Warning if interval too short -->
+                    <div v-if="isIntervalTooShort(replication)" class="mt-2 flex items-start gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                      <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                      </svg>
+                      <span>Intervalle trop court ! Devrait être ≥ {{ Math.ceil(replication.last_replication_duration_seconds / 60 * 3) }} min</span>
+                    </div>
                   </div>
                 </td>
 
@@ -639,6 +647,14 @@
                 step="15"
                 class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900"
               />
+              <p class="mt-2 text-xs text-gray-500">
+                💡 <strong>Recommandations selon la taille de la VM :</strong><br>
+                • VM < 20 GB : 15-30 min<br>
+                • VM 20-100 GB : 30-60 min<br>
+                • VM 100-500 GB : 60-120 min<br>
+                • VM > 500 GB : 120-360 min<br>
+                <span class="text-amber-600 font-medium">⚠️ L'intervalle doit être au moins 3× la durée de réplication</span>
+              </p>
             </div>
 
             <!-- Mode Failover -->
@@ -1522,6 +1538,16 @@ function getSyncProgress(replicationId) {
   const activeOps = operationsStore.getOperationsByType('replication')
   const op = activeOps.find(o => o.id === replicationId)
   return op?.progress || 0
+}
+
+function isIntervalTooShort(replication) {
+  // Vérifier si l'intervalle est au moins 3× la durée de réplication
+  if (!replication.last_replication_duration_seconds) return false
+
+  const durationMinutes = replication.last_replication_duration_seconds / 60
+  const recommendedInterval = durationMinutes * 3
+
+  return replication.replication_interval_minutes < recommendedInterval
 }
 
 async function fetchDatastores(serverId) {
