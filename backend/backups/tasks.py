@@ -678,97 +678,9 @@ def execute_vm_backup(backup_job_id):
         return {'error': str(e)}
 
 
-@shared_task
-def execute_backup_verification(verification_id):
-    """
-    Tâche Celery pour exécuter une vérification SureBackup
-
-    Args:
-        verification_id: ID de la BackupVerification à exécuter
-    """
-    from backups.models import BackupVerification
-
-    logger.info(f"[CELERY-VERIFICATION] === VÉRIFICATION SUREBACKUP ===")
-    logger.info(f"[CELERY-VERIFICATION] Verification ID: {verification_id}")
-
-    try:
-        verification = BackupVerification.objects.get(id=verification_id)
-
-        # Déterminer le nom de la VM
-        if verification.ovf_export:
-            vm_name = verification.ovf_export.virtual_machine.name if verification.ovf_export.virtual_machine else "VM Inconnue"
-        elif verification.vm_backup:
-            vm_name = verification.vm_backup.virtual_machine.name
-        else:
-            vm_name = "VM Inconnue"
-
-        logger.info(f"[CELERY-VERIFICATION] VM: {vm_name}, Test type: {verification.test_type}")
-
-        # Mettre à jour le statut
-        verification.status = 'running'
-        verification.started_at = timezone.now()
-        verification.save()
-
-        try:
-            # TODO: Implémenter la logique de vérification réelle ici
-            # Pour l'instant, on simule un test réussi
-
-            import time
-            time.sleep(2)  # Simuler le temps de vérification
-
-            # Simuler un résultat de vérification
-            verification_details = f"""Test type: {verification.get_test_type_display()}
-Serveur ESXi: {verification.esxi_server.hostname}
-Durée: 2 secondes
-Tests effectués:
-✓ Boot de la VM
-✓ Connectivité réseau
-✓ Services principaux"""
-
-            verification.status = 'passed'
-            verification.completed_at = timezone.now()
-            verification.test_results = verification_details
-            verification.save()
-
-            logger.info(f"[CELERY-VERIFICATION] ✓ Vérification réussie pour {vm_name}")
-
-            # Send success email notification
-            try:
-                EmailNotificationService.send_surebackup_success_notification(
-                    vm_name=vm_name,
-                    verification_details=verification_details
-                )
-            except Exception as email_error:
-                logger.warning(f"[CELERY-VERIFICATION] Email notification failed: {email_error}")
-
-            return {'status': 'success', 'verification_id': verification.id}
-
-        except Exception as e:
-            error_message = str(e)
-            verification.status = 'failed'
-            verification.completed_at = timezone.now()
-            verification.error_message = error_message
-            verification.save()
-
-            logger.error(f"[CELERY-VERIFICATION] ✗ Vérification échouée pour {vm_name}: {error_message}")
-
-            # Send failure email notification
-            try:
-                EmailNotificationService.send_surebackup_failure_notification(
-                    vm_name=vm_name,
-                    error_message=error_message
-                )
-            except Exception as email_error:
-                logger.warning(f"[CELERY-VERIFICATION] Email notification failed: {email_error}")
-
-            return {'status': 'failed', 'error': error_message}
-
-    except BackupVerification.DoesNotExist:
-        logger.error(f"[CELERY-VERIFICATION] Verification {verification_id} introuvable")
-        return {'status': 'failed', 'error': f'Verification {verification_id} not found'}
-    except Exception as e:
-        logger.error(f"[CELERY-VERIFICATION] ✗ Erreur exécution vérification: {e}", exc_info=True)
-        return {'status': 'failed', 'error': str(e)}
+# REMOVED: SureBackup verification task (module removed)
+# The execute_backup_verification function has been removed as the SureBackup module
+# has been deprecated and removed from the system.
 
 
 @shared_task
@@ -893,8 +805,10 @@ def execute_replication(replication_id):
 
                 # Envoyer une notification à l'utilisateur
                 try:
-                    EmailNotificationService.send_backup_failure_notification(
+                    EmailNotificationService.send_replication_failure_notification(
                         vm_name=vm_name,
+                        source_server=replication.source_server.hostname,
+                        destination_server=replication.destination_server.hostname,
                         error_message=f"Une replica '{replica_vm_name}' existe déjà sur {replication.destination_server.hostname}. "
                                      f"Supprimez-la manuellement avant de lancer une nouvelle réplication."
                     )
@@ -930,9 +844,16 @@ def execute_replication(replication_id):
 
         # Envoyer notification de succès
         try:
-            EmailNotificationService.send_backup_success_notification(
+            # Calculer la durée de la réplication si disponible
+            duration_seconds = None
+            if replication.last_replication_duration_seconds:
+                duration_seconds = replication.last_replication_duration_seconds
+
+            EmailNotificationService.send_replication_success_notification(
                 vm_name=vm_name,
-                backup_path=f"Réplication vers {replication.destination_server.hostname}"
+                source_server=replication.source_server.hostname,
+                destination_server=replication.destination_server.hostname,
+                duration_seconds=duration_seconds
             )
         except Exception as email_error:
             logger.warning(f"[CELERY-REPLICATION-EXEC] Email notification failed: {email_error}")
@@ -953,8 +874,10 @@ def execute_replication(replication_id):
 
             # Envoyer notification d'échec
             try:
-                EmailNotificationService.send_backup_failure_notification(
+                EmailNotificationService.send_replication_failure_notification(
                     vm_name=replication.virtual_machine.name,
+                    source_server=replication.source_server.hostname,
+                    destination_server=replication.destination_server.hostname,
                     error_message=str(e)
                 )
             except Exception as email_error:
