@@ -654,6 +654,43 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Surcharge de retrieve pour obtenir le power_state en temps réel depuis ESXi
+        """
+        vm = self.get_object()
+        server = vm.server
+
+        try:
+            # Créer le service VMware
+            vmware = VMwareService(
+                host=server.hostname,
+                user=server.username,
+                password=server.password,
+                port=server.port or 443
+            )
+
+            # Connexion
+            if vmware.connect():
+                # Obtenir la VM depuis ESXi
+                vm_obj = vmware.get_vm_by_id(vm.vm_id)
+                if vm_obj:
+                    # Mettre à jour le power_state avec l'état réel
+                    real_power_state = str(vm_obj.runtime.powerState)
+                    vm.power_state = real_power_state
+                    vm.save(update_fields=['power_state'])
+                    logger.info(f"Power state mis à jour pour VM {vm.name}: {real_power_state}")
+
+                # Déconnexion
+                vmware.disconnect()
+        except Exception as e:
+            logger.warning(f"Impossible de récupérer l'état en temps réel pour {vm.name}: {e}")
+            # Continuer avec les données de la base si erreur
+
+        # Utiliser le serializer standard
+        serializer = self.get_serializer(vm)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['get'])
     def get_minimum_interval(self, request, pk=None):
         """
