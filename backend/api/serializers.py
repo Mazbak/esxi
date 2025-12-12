@@ -454,13 +454,35 @@ class VMReplicationSerializer(serializers.ModelSerializer):
             'status', 'status_display', 'failover_mode', 'failover_mode_display',
             'auto_failover_threshold_minutes', 'last_replication_at',
             'last_replication_duration_seconds', 'total_replicated_size_mb',
-            'is_active', 'created_at', 'updated_at'
+            'is_active', 'failover_active', 'failback_enabled',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'last_replication_at',
-                            'last_replication_duration_seconds', 'total_replicated_size_mb']
+                            'last_replication_duration_seconds', 'total_replicated_size_mb',
+                            'failover_active']
         extra_kwargs = {
             'source_server': {'required': False, 'allow_null': True}
         }
+
+    def validate(self, data):
+        """
+        Valider que l'intervalle est suffisant pour la taille de la VM
+        """
+        # Si on crée une nouvelle réplication ou on modifie l'intervalle
+        virtual_machine = data.get('virtual_machine', self.instance.virtual_machine if self.instance else None)
+        interval = data.get('replication_interval_minutes', self.instance.replication_interval_minutes if self.instance else None)
+
+        if virtual_machine and interval:
+            # Calculer l'intervalle minimum requis (utiliser disk_gb au lieu de provisioned_space)
+            vm_size_gb = virtual_machine.disk_gb if virtual_machine.disk_gb else 0
+            min_interval = VMReplication.calculate_minimum_interval(vm_size_gb)
+
+            if interval < min_interval:
+                raise serializers.ValidationError({
+                    'replication_interval_minutes': f'L\'intervalle doit être au moins {min_interval} minutes pour une VM de {vm_size_gb:.1f} GB (catégorie: {"< 20 GB" if vm_size_gb < 20 else "20-100 GB" if vm_size_gb < 100 else "100-500 GB" if vm_size_gb < 500 else "> 500 GB"})'
+                })
+
+        return data
 
 
 class FailoverEventSerializer(serializers.ModelSerializer):

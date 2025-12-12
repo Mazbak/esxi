@@ -224,15 +224,15 @@
               />
             </div>
 
-            <div class="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
+            <div class="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border-2 border-blue-200">
               <div class="flex items-center gap-3">
                 <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
-                <span class="font-medium text-gray-900">Vérifications SureBackup réussies</span>
+                <span class="font-medium text-gray-900">Restaurations réussies</span>
               </div>
               <input
-                v-model="settings.notify_surebackup_success"
+                v-model="settings.notify_restore_success"
                 type="checkbox"
                 class="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
               />
@@ -243,26 +243,40 @@
                 <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <span class="font-medium text-gray-900">Échecs de vérification SureBackup</span>
+                <span class="font-medium text-gray-900">Échecs de restauration</span>
               </div>
               <input
-                v-model="settings.notify_surebackup_failure"
+                v-model="settings.notify_restore_failure"
                 type="checkbox"
                 class="h-5 w-5 text-orange-600 focus:ring-orange-500 border-gray-300 rounded cursor-pointer"
               />
             </div>
 
-            <div class="flex items-center justify-between p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border-2 border-purple-200">
+            <div class="flex items-center justify-between p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border-2 border-purple-200">
               <div class="flex items-center gap-3">
                 <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <span class="font-medium text-gray-900">Réplications réussies</span>
+              </div>
+              <input
+                v-model="settings.notify_replication_success"
+                type="checkbox"
+                class="h-5 w-5 text-purple-600 focus:ring-purple-500 border-gray-300 rounded cursor-pointer"
+              />
+            </div>
+
+            <div class="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-pink-50 rounded-xl border-2 border-red-200">
+              <div class="flex items-center gap-3">
+                <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span class="font-medium text-gray-900">Échecs de réplication</span>
               </div>
               <input
                 v-model="settings.notify_replication_failure"
                 type="checkbox"
-                class="h-5 w-5 text-purple-600 focus:ring-purple-500 border-gray-300 rounded cursor-pointer"
+                class="h-5 w-5 text-red-600 focus:ring-red-500 border-gray-300 rounded cursor-pointer"
               />
             </div>
           </div>
@@ -520,8 +534,9 @@ const settings = ref({
   admin_email: '',
   notify_backup_success: false,
   notify_backup_failure: true,
-  notify_surebackup_success: true,
-  notify_surebackup_failure: true,
+  notify_restore_success: false,
+  notify_restore_failure: true,
+  notify_replication_success: false,
   notify_replication_failure: true,
   email_notifications_enabled: false
 })

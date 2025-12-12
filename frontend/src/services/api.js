@@ -73,6 +73,7 @@ export const virtualMachinesAPI = {
   removeAllSnapshots: (id) => apiClient.post(`/virtual-machines/${id}/remove_all_snapshots/`),
   powerOff: (id) => apiClient.post(`/virtual-machines/${id}/power_off/`),
   powerOn: (id) => apiClient.post(`/virtual-machines/${id}/power_on/`),
+  getMinimumInterval: (id) => apiClient.get(`/virtual-machines/${id}/get_minimum_interval/`),
 }
 
 // ===========================
@@ -281,6 +282,7 @@ export const vmReplicationsAPI = {
   getReplicationHistory: (id, limit = 20) => apiClient.get(`/vm-replications/${id}/replication_history/`, { params: { limit } }),
   getVMStates: (id) => apiClient.get(`/vm-replications/${id}/vm_states/`),
   performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/trigger_failover/`, data),
+  performFailback: (id) => apiClient.post(`/vm-replications/${id}/trigger_failback/`),
 }
 
 // ===========================

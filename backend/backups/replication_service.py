@@ -1004,6 +1004,11 @@ class ReplicationService:
             failover_event.completed_at = timezone.now()
             failover_event.save()
 
+            # Activer le flag failover_active sur la réplication
+            replication.failover_active = True
+            replication.save()
+            logger.info(f"Failover actif marqué pour réplication {replication.id}")
+
             # Déconnexion
             Disconnect(source_si)
             Disconnect(dest_si)
@@ -1086,6 +1091,167 @@ class ReplicationService:
                     }
 
             return {'should_failover': False, 'reason': f'Serveur source inaccessible (en attente du délai): {e}'}
+
+    def execute_failback(self, replication, triggered_by=None):
+        """
+        Exécuter un failback (retour à la normale)
+        Arrête la VM slave (destination) et rallume la VM master (source)
+
+        Args:
+            replication: Instance VMReplication
+            triggered_by: User ayant déclenché le failback (None si automatique)
+
+        Returns:
+            dict: Résultat du failback
+        """
+        try:
+            logger.info(f"[FAILBACK] === DÉBUT FAILBACK pour réplication {replication.id} ===")
+
+            if not replication.failover_active:
+                logger.warning(f"[FAILBACK] Aucun failover actif pour {replication.name}")
+                return {
+                    'success': False,
+                    'error': 'Aucun failover actif',
+                    'message': 'Aucun failover actif pour cette réplication'
+                }
+
+            source_server = replication.get_source_server
+            destination_server = replication.destination_server
+            vm_name = replication.virtual_machine.name
+            replica_vm_name = f"{vm_name}_replica"
+
+            # Se connecter aux serveurs
+            logger.info(f"[FAILBACK] Connexion au serveur source: {source_server.hostname}")
+            source_si = self._connect_to_server(source_server)
+
+            logger.info(f"[FAILBACK] Connexion au serveur destination: {destination_server.hostname}")
+            dest_si = self._connect_to_server(destination_server)
+
+            # Récupérer les VMs
+            source_vm = self._get_vm_by_name(source_si, vm_name)
+            dest_vm = self._get_vm_by_name(dest_si, replica_vm_name)
+
+            if not dest_vm:
+                # Si la VM de destination n'existe pas avec _replica, chercher avec le nom normal
+                dest_vm = self._get_vm_by_name(dest_si, vm_name)
+
+            if not source_vm:
+                logger.error(f"[FAILBACK] VM source non trouvée: {vm_name}")
+                Disconnect(source_si)
+                Disconnect(dest_si)
+                return {
+                    'success': False,
+                    'error': 'VM source non trouvée',
+                    'message': f'VM source {vm_name} non trouvée sur {source_server.hostname}'
+                }
+
+            # Arrêter la VM slave (destination)
+            if dest_vm and dest_vm.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
+                logger.info(f"[FAILBACK] Arrêt de la VM slave: {replica_vm_name}")
+                power_off_task = dest_vm.PowerOffVM_Task()
+
+                # Attendre la fin de l'arrêt
+                while power_off_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                    pass
+
+                if power_off_task.info.state == vim.TaskInfo.State.error:
+                    raise Exception(f"Erreur arrêt VM slave: {power_off_task.info.error}")
+
+                logger.info(f"[FAILBACK] VM slave arrêtée: {replica_vm_name}")
+            else:
+                logger.info(f"[FAILBACK] VM slave déjà arrêtée ou inexistante")
+
+            # Redémarrer la VM master (source)
+            if source_vm.runtime.powerState != vim.VirtualMachinePowerState.poweredOn:
+                logger.info(f"[FAILBACK] Démarrage de la VM master: {vm_name}")
+                power_on_task = source_vm.PowerOnVM_Task()
+
+                # Attendre le démarrage
+                while power_on_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                    pass
+
+                if power_on_task.info.state == vim.TaskInfo.State.error:
+                    raise Exception(f"Erreur démarrage VM master: {power_on_task.info.error}")
+
+                logger.info(f"[FAILBACK] VM master démarrée: {vm_name}")
+            else:
+                logger.info(f"[FAILBACK] VM master déjà démarrée: {vm_name}")
+
+            # Désactiver le flag failover_active
+            replication.failover_active = False
+            replication.save()
+            logger.info(f"[FAILBACK] Failover désactivé pour réplication {replication.id}")
+
+            # Déconnexion
+            Disconnect(source_si)
+            Disconnect(dest_si)
+
+            logger.info(f"[FAILBACK] === FAILBACK TERMINÉ AVEC SUCCÈS ===")
+
+            return {
+                'success': True,
+                'message': f"Failback de {vm_name} terminé avec succès. VM master rallumée, VM slave arrêtée.",
+                'master_powered_on': True,
+                'slave_powered_off': True
+            }
+
+        except Exception as e:
+            logger.error(f"[FAILBACK] ✗ Erreur lors du failback: {e}", exc_info=True)
+
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f"Erreur lors du failback: {e}"
+            }
+
+    def check_and_trigger_auto_failback(self, replication):
+        """
+        Vérifier si un failback automatique doit être déclenché
+        (quand master revient en ligne après un failover)
+
+        Args:
+            replication: Instance VMReplication
+
+        Returns:
+            dict: Résultat de la vérification
+        """
+        # Vérifier que le failback automatique est activé
+        if not replication.failback_enabled:
+            return {'should_failback': False, 'reason': 'Failback automatique désactivé'}
+
+        # Vérifier qu'un failover est actuellement actif
+        if not replication.failover_active:
+            return {'should_failback': False, 'reason': 'Aucun failover actif'}
+
+        # Vérifier que la VM master est revenue en ligne
+        source_server = replication.get_source_server
+
+        try:
+            # Tenter de se connecter au serveur source
+            si = self._connect_to_server(source_server)
+
+            # Vérifier la VM
+            vm = self._get_vm_by_name(si, replication.virtual_machine.name)
+
+            if not vm:
+                Disconnect(si)
+                return {'should_failback': False, 'reason': 'VM master non trouvée'}
+
+            # Vérifier l'état de la VM
+            if vm.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
+                # VM master revenue en ligne !
+                Disconnect(si)
+                return {
+                    'should_failback': True,
+                    'reason': f'VM master {replication.virtual_machine.name} revenue en ligne'
+                }
+
+            Disconnect(si)
+            return {'should_failback': False, 'reason': 'VM master toujours éteinte'}
+
+        except Exception as e:
+            logger.error(f"[FAILBACK-CHECK] Erreur vérification auto-failback pour {replication.name}: {e}")
+            return {'should_failback': False, 'reason': f'Serveur source inaccessible: {e}'}
 
     def delete_replicated_vm(self, replication):
         """

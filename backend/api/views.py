@@ -43,7 +43,7 @@ from api.serializers import (
     ReplicationLogSerializer, BackupVerificationSerializer, BackupVerificationScheduleSerializer,
     EmailSettingsSerializer
 )
-from backups.tasks import execute_backup_job, execute_backup_verification  # Celery tasks
+from backups.tasks import execute_backup_job  # Celery tasks
 
 
 # ==========================================================
@@ -649,6 +649,95 @@ class VirtualMachineViewSet(viewsets.ReadOnlyModelViewSet):
 
         except Exception as e:
             logger.exception(f"Erreur lors de l'allumage de la VM: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Surcharge de retrieve pour obtenir le power_state en temps réel depuis ESXi
+        """
+        vm = self.get_object()
+        server = vm.server
+
+        try:
+            # Créer le service VMware
+            vmware = VMwareService(
+                host=server.hostname,
+                user=server.username,
+                password=server.password,
+                port=server.port or 443
+            )
+
+            # Connexion
+            if vmware.connect():
+                logger.info(f"[RETRIEVE] Connexion ESXi réussie pour récupérer état de {vm.name}")
+
+                # Obtenir la VM depuis ESXi par UUID
+                vm_obj = vmware._find_vm_by_uuid(vm.vm_id)
+                if vm_obj:
+                    # Récupérer le power_state en temps réel
+                    real_power_state = str(vm_obj.runtime.powerState)
+                    logger.info(f"[RETRIEVE] Power state temps réel de {vm.name}: {real_power_state}")
+
+                    # Mettre à jour le power_state dans la base de données
+                    vm.power_state = real_power_state
+                    vm.save(update_fields=['power_state'])
+                    logger.info(f"[RETRIEVE] Power state mis à jour en BDD pour {vm.name}: {real_power_state}")
+                else:
+                    logger.warning(f"[RETRIEVE] VM {vm.name} (UUID: {vm.vm_id}) introuvable sur ESXi")
+
+                # Déconnexion
+                vmware.disconnect()
+            else:
+                logger.error(f"[RETRIEVE] Impossible de se connecter au serveur {server.hostname}")
+        except Exception as e:
+            logger.exception(f"[RETRIEVE] Erreur récupération état temps réel pour {vm.name}: {e}")
+            # Continuer avec les données de la base si erreur
+
+        # Utiliser le serializer standard
+        serializer = self.get_serializer(vm)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def get_minimum_interval(self, request, pk=None):
+        """
+        Obtenir l'intervalle minimum recommandé pour la réplication de cette VM
+        basé sur sa taille
+        """
+        vm = self.get_object()
+
+        try:
+            from backups.models import VMReplication
+
+            # Utiliser disk_gb au lieu de provisioned_space
+            vm_size_gb = vm.disk_gb if vm.disk_gb else 0
+            min_interval = VMReplication.calculate_minimum_interval(vm_size_gb)
+
+            # Déterminer la catégorie
+            if vm_size_gb < 20:
+                category = "< 20 GB"
+                range_text = "15-30 min"
+            elif vm_size_gb < 100:
+                category = "20-100 GB"
+                range_text = "30-60 min"
+            elif vm_size_gb < 500:
+                category = "100-500 GB"
+                range_text = "60-120 min"
+            else:
+                category = "> 500 GB"
+                range_text = "120-360 min"
+
+            return Response({
+                'vm_size_gb': round(vm_size_gb, 2),
+                'minimum_interval_minutes': min_interval,
+                'category': category,
+                'recommended_range': range_text
+            })
+
+        except Exception as e:
+            logger.exception(f"Erreur lors du calcul de l'intervalle minimum: {e}")
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -3142,8 +3231,17 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             # Calculer le prochain sync
             next_sync = None
             if replication.is_active and replication.last_replication_at:
+                # Calculer combien d'intervalles se sont écoulés depuis la dernière sync
+                now = timezone.now()
+                elapsed = now - replication.last_replication_at
+                interval_seconds = replication.replication_interval_minutes * 60
+
+                # Calculer combien d'intervalles complets se sont écoulés
+                intervals_elapsed = int(elapsed.total_seconds() / interval_seconds)
+
+                # Calculer le prochain sync futur (pas dans le passé)
                 next_sync = replication.last_replication_at + timezone.timedelta(
-                    minutes=replication.replication_interval_minutes
+                    seconds=(intervals_elapsed + 1) * interval_seconds
                 )
 
             # Calculer le temps jusqu'au prochain sync
@@ -3221,6 +3319,33 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 'error': result['message']
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['post'])
+    def trigger_failback(self, request, pk=None):
+        """Déclencher un failback manuel (retour à la normale)"""
+        replication = self.get_object()
+
+        # Vérifier qu'un failover est actif
+        if not replication.failover_active:
+            return Response({
+                'error': 'Aucun failover actif pour cette réplication'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Exécuter le failback via le service
+        from backups.replication_service import ReplicationService
+        service = ReplicationService()
+        result = service.execute_failback(replication, triggered_by=request.user)
+
+        if result['success']:
+            return Response({
+                'message': result['message'],
+                'master_powered_on': result.get('master_powered_on'),
+                'slave_powered_off': result.get('slave_powered_off')
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'error': result['message']
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def destroy(self, request, *args, **kwargs):
         """
         Supprimer une réplication ET la VM répliquée du serveur de destination
@@ -3282,108 +3407,11 @@ class FailoverEventViewSet(viewsets.ReadOnlyModelViewSet):
 # ==========================================================
 # 🔹 SUREBACKUP - Vérification de sauvegardes
 # ==========================================================
-class BackupVerificationViewSet(viewsets.ModelViewSet):
-    """Gestion des vérifications de sauvegardes (SureBackup)"""
-    queryset = BackupVerification.objects.all()
-    serializer_class = BackupVerificationSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['status', 'test_type', 'esxi_server']
-    ordering_fields = ['created_at', 'started_at', 'completed_at']
-    ordering = ['-created_at']
-    
-    @action(detail=False, methods=['post'])
-    def verify_ovf_export(self, request):
-        """Créer une vérification pour un export OVF"""
-        ovf_export_id = request.data.get('ovf_export_id')
-        esxi_server_id = request.data.get('esxi_server_id')
-        test_type = request.data.get('test_type', 'boot_ping')
-        
-        if not ovf_export_id or not esxi_server_id:
-            return Response(
-                {'error': 'ovf_export_id et esxi_server_id sont requis'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            ovf_export = OVFExportJob.objects.get(id=ovf_export_id, status='completed')
-            esxi_server = ESXiServer.objects.get(id=esxi_server_id)
-        except (OVFExportJob.DoesNotExist, ESXiServer.DoesNotExist) as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Créer la vérification
-        verification = BackupVerification.objects.create(
-            ovf_export=ovf_export,
-            esxi_server=esxi_server,
-            test_type=test_type,
-            status='pending',
-            test_datastore=request.data.get('test_datastore', 'datastore1')
-        )
-        
-        # TODO: Lancer la vérification en arrière-plan
-        # from backups.surebackup_service import SureBackupService
-        # service = SureBackupService()
-        # service.start_verification(verification.id)
-        
-        serializer = self.get_serializer(verification)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
-    @action(detail=True, methods=['post'])
-    def start_verification(self, request, pk=None):
-        """Démarrer une vérification manuellement"""
-        verification = self.get_object()
-
-        if verification.status != 'pending':
-            return Response(
-                {'error': 'La vérification a déjà été démarrée'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Lancer le service de vérification de manière asynchrone
-        execute_backup_verification.delay(verification.id)
-
-        serializer = self.get_serializer(verification)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'])
-    def statistics(self, request):
-        """Statistiques sur les vérifications de sauvegardes"""
-        total = BackupVerification.objects.count()
-        passed = BackupVerification.objects.filter(status='passed').count()
-        failed = BackupVerification.objects.filter(status='failed').count()
-        running = BackupVerification.objects.filter(status='running').count()
-        
-        success_rate = (passed / total * 100) if total > 0 else 0
-        
-        return Response({
-            'total': total,
-            'passed': passed,
-            'failed': failed,
-            'running': running,
-            'success_rate': round(success_rate, 2)
-        })
-
-
-class BackupVerificationScheduleViewSet(viewsets.ModelViewSet):
-    """Gestion des planifications de vérifications"""
-    queryset = BackupVerificationSchedule.objects.all()
-    serializer_class = BackupVerificationScheduleSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['virtual_machine', 'frequency', 'is_active']
-    ordering_fields = ['name', 'created_at']
-    ordering = ['name']
-    
-    @action(detail=True, methods=['post'])
-    def toggle_active(self, request, pk=None):
-        """Activer/Désactiver une planification"""
-        schedule = self.get_object()
-        schedule.is_active = not schedule.is_active
-        schedule.save()
-        
-        serializer = self.get_serializer(schedule)
-        return Response(serializer.data)
+# ==========================================================
+# 🔹 REMOVED: SureBackup ViewSets (Module supprimé)
+# ==========================================================
+# BackupVerificationViewSet et BackupVerificationScheduleViewSet
+# ont été retirés car le module SureBackup a été supprimé du système.
 
 
 # ==========================================================

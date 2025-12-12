@@ -369,13 +369,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useEsxiStore } from '@/stores/esxi'
 import { useToastStore } from '@/stores/toast'
+import { useOperationsStore } from '@/stores/operations'  // Store de persistance
 import { restoreAPI, storagePathsAPI, esxiServersAPI } from '@/services/api'
 
 const esxiStore = useEsxiStore()
 const toast = useToastStore()
+const operationsStore = useOperationsStore()  // Store de persistance
 
 const loading = ref(false)
 const error = ref(null)
@@ -424,6 +426,27 @@ const selectedBackupName = computed(() => {
   return file ? file.name : form.ovf_path.split('/').pop()
 })
 
+// Watcher pour persister la progression de restauration
+watch([isRestoring, restoreProgress, restoreStatus, restoreMessage, currentRestoreId],
+  ([restoring, progress, status, message, restoreId]) => {
+    if (restoring && restoreId) {
+      // Sauvegarder l'opération en cours
+      operationsStore.setOperation('restore', restoreId, {
+        status: status,
+        progress: progress || 0,
+        vm_name: form.vm_name,
+        message: message,
+        ovf_path: form.ovf_path
+      })
+      console.log('[RESTORE-PERSIST] Sauvegarde progression:', { restoreId, progress, status })
+    } else if (!restoring && restoreId) {
+      // Restauration terminée, supprimer de la persistance
+      operationsStore.removeOperation('restore', restoreId)
+      console.log('[RESTORE-PERSIST] Suppression restauration terminée:', restoreId)
+    }
+  }
+)
+
 onMounted(async () => {
   // Charger les serveurs ESXi
   if (servers.value.length === 0) {
@@ -431,6 +454,35 @@ onMounted(async () => {
   }
   // Charger les chemins de sauvegarde prédéfinis
   await loadStoragePaths()
+
+  // Restaurer l'état depuis la persistance
+  setTimeout(() => {
+    const activeRestores = operationsStore.getOperationsByType('restore')
+    console.log('[RESTORE-RESTORE] Restaurations actives trouvées:', activeRestores.length)
+
+    if (activeRestores.length > 0) {
+      // Restaurer la première opération active (on ne devrait en avoir qu'une à la fois)
+      const restoreOp = activeRestores[0]
+
+      // Restaurer les valeurs
+      isRestoring.value = true
+      restoreProgress.value = restoreOp.progress || 0
+      restoreStatus.value = restoreOp.status || 'running'
+      restoreMessage.value = restoreOp.message || 'Restauration en cours...'
+      currentRestoreId.value = restoreOp.id
+      form.vm_name = restoreOp.vm_name || ''
+      form.ovf_path = restoreOp.ovf_path || ''
+
+      console.log('[RESTORE-RESTORE] ✓ État restauré:', {
+        id: restoreOp.id,
+        progress: restoreOp.progress,
+        status: restoreOp.status
+      })
+
+      // Relancer le polling pour continuer à suivre la progression
+      startRestorePolling(restoreOp.id)
+    }
+  }, 500)
 })
 
 async function loadDatastores() {
@@ -466,6 +518,66 @@ async function loadNetworks() {
   }
 }
 
+// Fonction pour démarrer le polling de progression (réutilisable)
+function startRestorePolling(restoreId) {
+  console.log('[RESTORE-POLLING] Démarrage polling pour restoreId:', restoreId)
+
+  // Polling toutes les 500ms pour récupérer la progression
+  const pollInterval = setInterval(async () => {
+    try {
+      const progressResponse = await esxiServersAPI.getRestoreProgress(restoreId)
+      const progressData = progressResponse.data
+
+      restoreProgress.value = progressData.progress
+      restoreStatus.value = progressData.status
+      restoreMessage.value = progressData.message
+
+      // Arrêter le polling si terminé, en erreur ou annulé
+      if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
+        clearInterval(pollInterval)
+        isRestoring.value = false
+        const tempRestoreId = currentRestoreId.value
+        currentRestoreId.value = null
+
+        if (progressData.status === 'completed') {
+          success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
+          toast.success(`VM "${form.vm_name}" restaurée avec succès !`, 5000)
+
+          // Supprimer de la persistance
+          operationsStore.removeOperation('restore', tempRestoreId)
+
+          // Réinitialiser le formulaire après succès
+          setTimeout(() => {
+            resetForm()
+          }, 2000)
+        } else if (progressData.status === 'cancelled') {
+          error.value = `⚠️ Restauration annulée par l'utilisateur`
+          toast.warning('Restauration annulée', 3000)
+
+          // Supprimer de la persistance
+          operationsStore.removeOperation('restore', tempRestoreId)
+        } else if (progressData.status === 'error') {
+          error.value = progressData.message
+          toast.error(`Erreur: ${progressData.message}`)
+
+          // Supprimer de la persistance
+          operationsStore.removeOperation('restore', tempRestoreId)
+        }
+      }
+    } catch (pollErr) {
+      console.error('Erreur polling progression:', pollErr)
+      clearInterval(pollInterval)
+      isRestoring.value = false
+
+      // Supprimer de la persistance en cas d'erreur
+      if (currentRestoreId.value) {
+        operationsStore.removeOperation('restore', currentRestoreId.value)
+      }
+      currentRestoreId.value = null
+    }
+  }, 500)
+}
+
 async function handleRestore() {
   error.value = null
   success.value = null
@@ -474,8 +586,6 @@ async function handleRestore() {
   restoreProgress.value = 0
   restoreStatus.value = 'starting'
   restoreMessage.value = 'Démarrage de la restauration...'
-
-  let pollInterval = null
 
   try {
     // Appeler l'API de restauration
@@ -501,44 +611,17 @@ async function handleRestore() {
       currentRestoreId.value = response.data.restore_id
       const restoreId = response.data.restore_id
 
-      // Polling toutes les 500ms pour récupérer la progression
-      pollInterval = setInterval(async () => {
-        try {
-          const progressResponse = await esxiServersAPI.getRestoreProgress(restoreId)
-          const progressData = progressResponse.data
+      // Sauvegarder immédiatement dans le store de persistance
+      operationsStore.setOperation('restore', restoreId, {
+        status: 'starting',
+        progress: 0,
+        vm_name: form.vm_name,
+        message: 'Démarrage de la restauration...',
+        ovf_path: form.ovf_path
+      })
 
-          restoreProgress.value = progressData.progress
-          restoreStatus.value = progressData.status
-          restoreMessage.value = progressData.message
-
-          // Arrêter le polling si terminé, en erreur ou annulé
-          if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
-            clearInterval(pollInterval)
-            isRestoring.value = false
-            currentRestoreId.value = null
-
-            if (progressData.status === 'completed') {
-              success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
-              toast.success(`VM "${form.vm_name}" restaurée avec succès !`, 5000)
-
-              // Réinitialiser le formulaire après succès
-              setTimeout(() => {
-                resetForm()
-              }, 2000)
-            } else if (progressData.status === 'cancelled') {
-              error.value = `⚠️ Restauration annulée par l'utilisateur`
-              toast.warning('Restauration annulée', 3000)
-            } else if (progressData.status === 'error') {
-              throw new Error(progressData.message)
-            }
-          }
-        } catch (pollErr) {
-          console.error('Erreur polling progression:', pollErr)
-          clearInterval(pollInterval)
-          isRestoring.value = false
-          currentRestoreId.value = null
-        }
-      }, 500)
+      // Démarrer le polling
+      startRestorePolling(restoreId)
     } else {
       // Pas de restore_id, succès immédiat (ancien comportement)
       success.value = `✅ Restauration réussie ! VM "${form.vm_name}" déployée avec succès.`
@@ -551,7 +634,6 @@ async function handleRestore() {
     }
 
   } catch (err) {
-    if (pollInterval) clearInterval(pollInterval)
     isRestoring.value = false
     currentRestoreId.value = null
     error.value = err.response?.data?.error || err.message || 'Erreur lors de la restauration'

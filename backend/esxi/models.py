@@ -71,8 +71,9 @@ class EmailSettings(models.Model):
     # Notification Settings
     notify_backup_success = models.BooleanField(default=False, help_text='Notifier les sauvegardes réussies')
     notify_backup_failure = models.BooleanField(default=True, help_text='Notifier les échecs de sauvegarde')
-    notify_surebackup_success = models.BooleanField(default=True, help_text='Notifier les vérifications SureBackup réussies')
-    notify_surebackup_failure = models.BooleanField(default=True, help_text='Notifier les échecs de vérification SureBackup')
+    notify_restore_success = models.BooleanField(default=False, help_text='Notifier les restaurations réussies')
+    notify_restore_failure = models.BooleanField(default=True, help_text='Notifier les échecs de restauration')
+    notify_replication_success = models.BooleanField(default=False, help_text='Notifier les réplications réussies')
     notify_replication_failure = models.BooleanField(default=True, help_text='Notifier les échecs de réplication')
 
     # Email enabled
