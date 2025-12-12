@@ -1384,7 +1384,19 @@ function getNextSyncCountdown(replication) {
 }
 
 function isSyncing(replication) {
-  return replication.status === 'syncing' || replicatingId.value === replication.id
+  // Vérifier le status backend
+  if (replication.status === 'syncing') return true
+
+  // Vérifier l'état local
+  if (replicatingId.value === replication.id) return true
+
+  // CORRECTION: Vérifier dans operationsStore (pour persister après refresh)
+  const operation = operationsStore.getOperation('replication', replication.id)
+  if (operation && ['running', 'starting', 'in_progress'].includes(operation.status)) {
+    return true
+  }
+
+  return false
 }
 
 function getReplicationProgress(replicationId) {

@@ -118,6 +118,30 @@
         </p>
       </div>
 
+      <!-- Répertoire de sauvegarde -->
+      <div class="group">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <svg class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          Répertoire de sauvegarde
+        </label>
+        <div class="relative">
+          <input
+            v-model="form.backup_location"
+            type="text"
+            placeholder="/mnt/backups ou /var/backups/vms"
+            class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-teal-500 focus:ring-4 focus:ring-teal-500/20 transition-all outline-none text-gray-900 bg-white"
+          >
+          <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+        </div>
+        <p class="mt-2 text-xs text-gray-600">
+          📁 Laissez vide pour utiliser le répertoire par défaut
+        </p>
+      </div>
+
       <!-- Aperçu de la planification -->
       <div v-if="schedulePreview" class="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl shadow-sm">
         <div class="flex items-center gap-3">
@@ -198,7 +222,8 @@ const form = reactive({
   full_backup_interval_days: 7,
   backup_configuration: null,
   remote_storage: null,
-  interval_hours: null
+  interval_hours: null,
+  backup_location: ''
 })
 
 const virtualMachines = computed(() => esxiStore.virtualMachines)
@@ -248,6 +273,7 @@ watch(() => props.schedule, (newSchedule) => {
     form.backup_configuration = newSchedule.backup_configuration || null
     form.remote_storage = newSchedule.remote_storage || null
     form.interval_hours = newSchedule.interval_hours || null
+    form.backup_location = newSchedule.backup_location || ''
   }
 }, { immediate: true })
 
@@ -299,5 +325,6 @@ function resetForm() {
   form.backup_configuration = null
   form.remote_storage = null
   form.interval_hours = null
+  form.backup_location = ''
 }
 </script>

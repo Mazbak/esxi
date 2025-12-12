@@ -613,6 +613,12 @@ class BackupSchedule(models.Model):
         related_name='schedules',
         help_text="Stockage distant pour les backups"
     )
+    backup_location = models.CharField(
+        max_length=512,
+        blank=True,
+        default='',
+        help_text="Répertoire de sauvegarde (ex: /mnt/backups, /var/backups/vms)"
+    )
     is_enabled = models.BooleanField(
         default=True,
         help_text="Si False, le schedule ne sera pas exécuté"
