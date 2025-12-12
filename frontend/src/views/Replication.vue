@@ -1228,6 +1228,7 @@ const loadingHistory = ref(new Set()) // Set of replication IDs with history bei
 // Auto-refresh intervals
 let statesRefreshInterval = null
 let countdownInterval = null
+let progressPollingInterval = null  // Polling pour la progression des réplications en cours
 
 const form = ref({
   name: '',
@@ -1306,6 +1307,60 @@ onMounted(() => {
     }
   }, 30000) // 30 secondes
 
+  // NOUVEAU: Polling automatique pour la progression des réplications en cours
+  const checkReplicationProgress = async () => {
+    for (const replication of replications.value) {
+      if (replication.status === 'syncing') {
+        try {
+          const progressResponse = await vmReplicationsAPI.getProgress(replication.id)
+          const progressData = progressResponse.data
+
+          // Mettre à jour le store avec les données de progression
+          if (progressData.status !== 'not_running' && progressData.progress !== undefined) {
+            operationsStore.setOperation('replication', replication.id, {
+              vmName: progressData.vm_name || replication.vm_name,
+              progress: progressData.progress || 0,
+              status: progressData.status,
+              message: progressData.message || '',
+              started_at: progressData.started_at,
+              updated_at: progressData.updated_at
+            })
+
+            // Log pour debug
+            console.log(`[REPLICATION-PROGRESS] ${replication.vm_name}: ${progressData.progress}% - ${progressData.message}`)
+
+            // Si la réplication est terminée ou en erreur, gérer la fin
+            if (progressData.status === 'completed') {
+              toast.success(`✅ Réplication de ${progressData.vm_name || replication.vm_name} terminée avec succès !`, { duration: 5000 })
+
+              // Nettoyer le store après 10 secondes (laisser le temps de voir le succès)
+              setTimeout(() => {
+                operationsStore.removeOperation('replication', replication.id)
+                fetchData() // Rafraîchir les données
+              }, 10000)
+            } else if (progressData.status === 'error') {
+              toast.error(`❌ Erreur de réplication: ${progressData.message}`, { duration: 6000 })
+
+              // Nettoyer immédiatement en cas d'erreur
+              setTimeout(() => {
+                operationsStore.removeOperation('replication', replication.id)
+                fetchData()
+              }, 2000)
+            }
+          }
+        } catch (error) {
+          console.error(`Erreur polling progression pour réplication ${replication.id}:`, error)
+        }
+      }
+    }
+  }
+
+  // Lancer immédiatement une vérification après 500ms
+  setTimeout(checkReplicationProgress, 500)
+
+  // Puis continuer toutes les 1 seconde (comme dans Restore.vue, mais 500ms serait encore mieux)
+  progressPollingInterval = setInterval(checkReplicationProgress, 1000)
+
   // Force re-render toutes les secondes pour le compte à rebours
   countdownInterval = setInterval(() => {
     // Force Vue to re-render by creating a new reference
@@ -1322,6 +1377,10 @@ onUnmounted(() => {
   if (statesRefreshInterval) {
     clearInterval(statesRefreshInterval)
     statesRefreshInterval = null
+  }
+  if (progressPollingInterval) {
+    clearInterval(progressPollingInterval)
+    progressPollingInterval = null
   }
   if (countdownInterval) {
     clearInterval(countdownInterval)
@@ -1747,14 +1806,8 @@ async function startReplicationWithoutCheck(replication) {
     message: 'Démarrage de la réplication...'
   })
 
-  replicatingId.value = replication.id
-  replicationProgress.value = 0
-  replicationStatus.value = 'starting'
-  replicationMessage.value = 'Démarrage de la réplication...'
-
   try {
     const response = await vmReplicationsAPI.startReplication(replication.id)
-    const replicationId = response.data.replication_id
 
     // Afficher message approprié selon le type de réponse
     if (response.data.warning) {
@@ -1763,120 +1816,12 @@ async function startReplicationWithoutCheck(replication) {
       toast.success(response.data.message || 'Réplication démarrée')
     }
 
-    // Si on a un replication_id, démarrer le polling de la progression
-    if (replicationId) {
-      currentReplicationId.value = replicationId
+    // Rafraîchir les données pour voir le statut 'syncing'
+    await fetchData()
 
-      // Sauvegarder le currentReplicationId dans le store pour restauration après refresh
-      operationsStore.setOperation('replication', replication.id, {
-        vmName: replication.vm_name,
-        progress: 0,
-        status: 'starting',
-        message: 'Démarrage de la réplication...',
-        currentReplicationId: replicationId  // UUID pour le polling
-      })
-
-      // Polling toutes les 500ms pour récupérer la progression
-      pollInterval = setInterval(async () => {
-        try {
-          const progressResponse = await vmReplicationsAPI.getReplicationProgress(replicationId)
-          const progressData = progressResponse.data
-
-          // Mettre à jour le store ET les variables locales
-          operationsStore.updateProgress(
-            'replication',
-            replication.id,
-            progressData.progress,
-            progressData.status,
-            progressData.message
-          )
-
-          replicationProgress.value = progressData.progress
-          replicationStatus.value = progressData.status
-          replicationMessage.value = progressData.message
-
-          // Arrêter le polling si terminé, en erreur ou annulé
-          if (progressData.status === 'completed' || progressData.status === 'error' || progressData.status === 'cancelled') {
-            clearInterval(pollInterval)
-            pollInterval = null
-            replicatingId.value = null
-            currentReplicationId.value = null
-
-            if (progressData.status === 'completed') {
-              toast.success('Réplication terminée')
-              // Retirer du store après 10 secondes
-              setTimeout(() => {
-                operationsStore.removeOperation('replication', replication.id)
-                replicationProgress.value = 0
-                replicationStatus.value = ''
-                replicationMessage.value = ''
-              }, 10000)
-            } else if (progressData.status === 'cancelled') {
-              toast.info('Réplication annulée par l\'utilisateur')
-              operationsStore.removeOperation('replication', replication.id)
-              replicationProgress.value = 0
-              replicationStatus.value = ''
-              replicationMessage.value = ''
-            } else if (progressData.status === 'error') {
-              // Détecter le type d'erreur
-              const errorMessage = progressData.message || ''
-
-              // 1. Détecter l'erreur de VM allumée (powered on)
-              if (errorMessage.includes('powered on') || errorMessage.includes('allumée')) {
-                // Afficher le modal de gestion de VM allumée
-                poweredOnModalData.value = {
-                  vmId: replication.virtual_machine,
-                  vmName: replication.vm_name,
-                  replicationId: replication.id,
-                  poweringOff: false,
-                  poweringOn: false,
-                  wasPoweredOn: false
-                }
-                showPoweredOnModal.value = true
-              }
-              // 2. Détecter l'erreur de snapshot
-              else if (errorMessage.includes('snapshot')) {
-                // Extraire le nombre de snapshots si possible
-                const snapshotMatch = errorMessage.match(/(\d+)\s+snapshot/)
-                const snapshotCount = snapshotMatch ? parseInt(snapshotMatch[1]) : 0
-
-                // Afficher le modal de gestion des snapshots
-                snapshotModalData.value = {
-                  vmId: replication.virtual_machine,
-                  vmName: replication.vm_name,
-                  snapshotCount: snapshotCount,
-                  replicationId: replication.id,
-                  removing: false
-                }
-                showSnapshotModal.value = true
-              }
-              // 3. Autres erreurs
-              else {
-                toast.error(errorMessage || 'La réplication a échoué')
-              }
-
-              operationsStore.removeOperation('replication', replication.id)
-              replicationProgress.value = 0
-              replicationStatus.value = ''
-              replicationMessage.value = ''
-            }
-          }
-        } catch (pollErr) {
-          console.error('Erreur polling progression:', pollErr)
-          if (pollInterval) {
-            clearInterval(pollInterval)
-            pollInterval = null
-          }
-          operationsStore.removeOperation('replication', replication.id)
-          replicatingId.value = null
-          currentReplicationId.value = null
-        }
-      }, 500)
-    } else {
-      replicatingId.value = null
-    }
-
-    fetchData()
+    // NOTE: Le polling automatique dans onMounted() va détecter le status='syncing'
+    // et commencer à récupérer la progression automatiquement toutes les 1 seconde
+    console.log(`[REPLICATION-START] Réplication ${replication.id} démarrée - Le polling automatique va prendre le relais`)
   } catch (error) {
     console.error('Erreur démarrage réplication:', error)
     const errorMsg = error.response?.data?.error || 'Impossible de démarrer la réplication'
