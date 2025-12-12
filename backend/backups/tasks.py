@@ -842,6 +842,14 @@ def execute_replication(replication_id):
 
         logger.info(f"[CELERY-REPLICATION-EXEC] ✓ Réplication terminée avec succès: {vm_name}")
 
+        # IMPORTANT: S'assurer que le statut est bien 'active' après le succès
+        # (le service devrait le faire, mais on force pour être sûr)
+        replication.refresh_from_db()
+        if replication.status == 'syncing':
+            replication.status = 'active'
+            replication.save()
+            logger.info(f"[CELERY-REPLICATION-EXEC] Statut remis à 'active'")
+
         # Envoyer notification de succès
         try:
             # Calculer la durée de la réplication si disponible
