@@ -78,7 +78,7 @@ class BackupScheduleSerializer(serializers.ModelSerializer):
         model = BackupSchedule
         fields = ['id', 'virtual_machine', 'vm_name', 'frequency', 'time_hour', 'time_minute',
                   'day_of_week', 'day_of_month', 'backup_mode', 'backup_strategy', 'remote_storage',
-                  'remote_storage_name', 'is_active', 'last_run', 'next_run',
+                  'remote_storage_name', 'backup_location', 'is_active', 'last_run', 'next_run',
                   'schedule_description', 'created_at']
         read_only_fields = ['id', 'last_run', 'next_run', 'created_at']
 
