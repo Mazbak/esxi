@@ -227,21 +227,33 @@
 
                 <!-- Sync Info -->
                 <td class="px-4 py-4">
-                  <div class="space-y-1">
-                    <!-- Syncing Indicator with Progress -->
-                    <div v-if="isSyncing(replication)" class="flex items-center gap-2 text-xs mb-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
-                      <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      <span class="font-semibold text-blue-700">
-                        🔄 Synchronisation en cours...
-                        <span class="text-blue-900 ml-1">{{ getSyncProgress(replication.id) }}%</span>
-                      </span>
+                  <div class="space-y-2">
+                    <!-- Syncing Indicator with Progress Bar -->
+                    <div v-if="isSyncing(replication)" class="space-y-2">
+                      <div class="flex items-center gap-2 text-xs">
+                        <svg class="animate-spin h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="font-semibold text-blue-700">Réplication en cours {{ getReplicationProgress(replication.id) }}%</span>
+                      </div>
+
+                      <!-- Progress Bar -->
+                      <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          class="h-2.5 rounded-full transition-all duration-300 bg-gradient-to-r from-blue-500 to-indigo-600"
+                          :style="{ width: getReplicationProgress(replication.id) + '%' }"
+                        ></div>
+                      </div>
+
+                      <!-- Progress Message -->
+                      <div class="text-xs text-gray-600">
+                        {{ getReplicationMessage(replication.id) || 'Synchronisation en cours...' }}
+                      </div>
                     </div>
 
                     <!-- Last Sync -->
-                    <div class="flex items-center gap-2 text-xs">
+                    <div v-if="!isSyncing(replication)" class="flex items-center gap-2 text-xs">
                       <span class="text-gray-500">Dernier sync:</span>
                       <span class="font-medium text-gray-700">{{ formatRelativeTime(replication.last_replication_at) }}</span>
                     </div>
@@ -261,9 +273,8 @@
                     </div>
 
                     <!-- Duration if available -->
-                    <div v-if="replication.last_replication_duration_seconds" class="text-xs text-gray-500">
-                      <span class="text-gray-400">Durée dernière sync:</span>
-                      <span class="font-medium ml-1">⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}</span>
+                    <div v-if="replication.last_replication_duration_seconds" class="text-xs text-gray-400">
+                      ⏱️ {{ formatDuration(replication.last_replication_duration_seconds) }}
                     </div>
 
                     <!-- Warning if interval too short -->
@@ -281,24 +292,10 @@
                   <span :class="getStatusClass(replication.status)" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
                     {{ replication.status_display }}
                   </span>
-
-                  <!-- Failover Status -->
-                  <div class="mt-1 space-y-1">
-                    <div v-if="replication.failover_active" class="flex items-center gap-1">
-                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                        ⚡ Failover Actif
-                      </span>
-                    </div>
-                    <div v-else-if="replication.failover_mode === 'automatic'">
-                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                        ✅ Normal (Auto)
-                      </span>
-                    </div>
-                    <div v-else-if="replication.failover_mode === 'manual'">
-                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-700">
-                        🔧 Manuel
-                      </span>
-                    </div>
+                  <div v-if="replication.failover_mode === 'automatic'" class="mt-1">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                      Auto-Failover
+                    </span>
                   </div>
                 </td>
 
@@ -320,9 +317,7 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </button>
-                  <!-- Failover button (only if failover NOT active) -->
                   <button
-                    v-if="!replication.failover_active"
                     @click="showFailoverModal(replication)"
                     :disabled="!replication.is_active"
                     class="text-orange-600 hover:text-orange-900 disabled:text-gray-400"
@@ -332,19 +327,6 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                   </button>
-
-                  <!-- Failback button (only if failover IS active) -->
-                  <button
-                    v-if="replication.failover_active"
-                    @click="triggerFailback(replication)"
-                    class="text-green-600 hover:text-green-900"
-                    title="Failback - Retour à la normale"
-                  >
-                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                    </svg>
-                  </button>
-
                   <button
                     @click="editReplication(replication)"
                     class="text-indigo-600 hover:text-indigo-900"
@@ -498,24 +480,8 @@
           </button>
         </div>
 
-        <!-- Form Content with Beautiful Spacing -->
-        <div class="px-8 py-6 space-y-6 overflow-y-auto max-h-[calc(90vh-180px)] custom-scrollbar">
-          <!-- Nom du replication -->
-          <div class="group">
-            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-              <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-              </svg>
-              Nom de la réplication
-            </label>
-            <input
-              v-model="form.name"
-              type="text"
-              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900 placeholder-gray-400"
-              placeholder="Ex: Réplication WebServer Prod"
-            />
-          </div>
-
+        <!-- Form Content - SIMPLIFIÉ -->
+        <div class="px-8 py-6 space-y-6">
           <!-- Machine Virtuelle -->
           <div class="group">
             <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
@@ -527,22 +493,20 @@
             <div class="relative">
               <select
                 v-model="form.virtual_machine"
+                @change="updateFormName"
+                required
                 class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
                 :class="{'border-amber-400 bg-amber-50': virtualMachines.length === 0}"
               >
-                <option value="">{{ virtualMachines.length === 0 ? 'Aucune VM disponible - Ajoutez un serveur ESXi' : 'Sélectionner une VM...' }}</option>
-                <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">{{ vm.name }}</option>
+                <option value="">{{ virtualMachines.length === 0 ? 'Aucune VM disponible - Ajoutez un serveur ESXi' : 'Sélectionner une VM à répliquer...' }}</option>
+                <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">
+                  {{ vm.name }} ({{ vm.server_name }})
+                </option>
               </select>
               <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </div>
-            <p v-if="virtualMachines.length === 0" class="mt-2 text-xs text-amber-600 flex items-center gap-1">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              Ajoutez d'abord un serveur ESXi et synchronisez les VMs dans le menu Serveurs ESXi
-            </p>
           </div>
 
           <!-- Serveur Destination -->
@@ -556,34 +520,17 @@
             <div class="relative">
               <select
                 v-model="form.destination_server"
+                required
                 class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                :class="{'border-amber-400 bg-amber-50': availableDestinationServers.length === 0}"
               >
-                <option value="">{{ availableDestinationServers.length === 0 ? 'Aucun serveur disponible' : 'Sélectionner le serveur de destination...' }}</option>
-                <option v-for="server in availableDestinationServers" :key="server.id" :value="server.id">{{ server.name }} ({{ server.host }})</option>
+                <option value="">Sélectionner le serveur de destination...</option>
+                <option v-for="server in availableDestinationServers" :key="server.id" :value="server.id">
+                  {{ server.name }} ({{ server.host }})
+                </option>
               </select>
               <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
-            </div>
-            <p v-if="selectedVM" class="mt-2 text-xs text-blue-600 flex items-center gap-1">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              La VM sera répliquée depuis {{ selectedVM.server_name }} vers le serveur sélectionné
-            </p>
-          </div>
-
-          <!-- Alert if no servers -->
-          <div v-if="esxiServers.length < 2" class="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4">
-            <div class="flex items-start gap-3">
-              <svg class="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              <div>
-                <h4 class="text-sm font-semibold text-amber-900 mb-1">Serveurs insuffisants</h4>
-                <p class="text-sm text-amber-800">Vous devez avoir au moins deux serveurs ESXi pour pouvoir répliquer une VM d'un serveur vers un autre.</p>
-              </div>
             </div>
           </div>
 
@@ -598,124 +545,56 @@
             <div class="relative">
               <select
                 v-model="form.destination_datastore"
+                required
                 class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                :class="{'border-amber-400 bg-amber-50': !form.destination_server || loadingDatastores, 'animate-pulse': loadingDatastores}"
                 :disabled="!form.destination_server || loadingDatastores"
               >
                 <option value="">
                   {{ !form.destination_server ? 'Sélectionnez d\'abord un serveur' :
-                     loadingDatastores ? '⏳ Chargement des datastores...' :
-                     destinationDatastores.length === 0 ? 'Aucun datastore disponible' :
+                     loadingDatastores ? '⏳ Chargement...' :
                      'Sélectionner un datastore...' }}
                 </option>
                 <option v-for="ds in destinationDatastores" :key="ds.name" :value="ds.name">
                   {{ ds.name }} - {{ formatDatastoreInfo(ds) }}
                 </option>
               </select>
-              <!-- Loading spinner -->
               <svg v-if="loadingDatastores" class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-indigo-600 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <!-- Dropdown arrow -->
               <svg v-else class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </div>
-            <p v-if="form.destination_server && !loadingDatastores && selectedDatastore" class="mt-2 text-xs text-indigo-600 flex items-center gap-1">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              Capacité: {{ selectedDatastore.capacity_gb }}GB | Libre: {{ selectedDatastore.free_space_gb }}GB ({{ selectedDatastore.free_percent }}%)
+            <p v-if="selectedDatastore" class="mt-2 text-xs text-indigo-600">
+              💾 Libre: {{ selectedDatastore.free_space_gb }}GB / {{ selectedDatastore.capacity_gb }}GB
             </p>
           </div>
 
-          <!-- Intervalle et Mode -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Intervalle -->
-            <div class="group">
-              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <!-- Intervalle avec suggestion automatique -->
+          <div class="group">
+            <label class="flex items-center justify-between gap-2 text-sm font-semibold text-gray-700 mb-2">
+              <div class="flex items-center gap-2">
                 <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Intervalle entre les synchronisations (minutes)
-              </label>
-              <input
-                v-model.number="form.replication_interval_minutes"
-                type="number"
-                min="15"
-                step="15"
-                class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900"
-              />
-              <p class="mt-2 text-xs text-gray-500">
-                💡 <strong>Recommandations selon la taille de la VM :</strong><br>
-                • VM < 20 GB : 15-30 min<br>
-                • VM 20-100 GB : 30-60 min<br>
-                • VM 100-500 GB : 60-120 min<br>
-                • VM > 500 GB : 120-360 min<br>
-                <span class="text-amber-600 font-medium">⚠️ L'intervalle doit être au moins 3× la durée de réplication</span>
-              </p>
-            </div>
-
-            <!-- Mode Failover -->
-            <div class="group">
-              <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                Mode de Failover
-              </label>
-              <div class="relative">
-                <select
-                  v-model="form.failover_mode"
-                  class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-red-500 focus:ring-4 focus:ring-red-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer"
-                >
-                  <option value="manual">Manuel</option>
-                  <option value="automatic">Automatique</option>
-                </select>
-                <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
+                Intervalle de réplication (minutes)
               </div>
-            </div>
-          </div>
-
-          <!-- Auto-Failover Threshold (conditional) -->
-          <div v-if="form.failover_mode === 'automatic'" class="group bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200 rounded-xl p-4">
-            <label class="flex items-center gap-2 text-sm font-semibold text-red-800 mb-2">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              Seuil Auto-Failover (minutes)
+              <button v-if="selectedVM" @click="setSuggestedInterval" type="button" class="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors">
+                Suggéré: {{ suggestedInterval }} min
+              </button>
             </label>
             <input
-              v-model.number="form.auto_failover_threshold_minutes"
+              v-model.number="form.replication_interval_minutes"
               type="number"
-              min="5"
-              class="w-full px-4 py-3 border-2 border-red-300 bg-white rounded-xl focus:border-red-500 focus:ring-4 focus:ring-red-500/20 transition-all outline-none text-gray-900"
+              min="15"
+              step="15"
+              required
+              class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900"
             />
-            <p class="mt-2 text-xs text-red-700 flex items-center gap-1">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              Temps d'indisponibilité avant déclenchement automatique du failover
+            <p v-if="selectedVM" class="mt-2 text-xs text-gray-600">
+              📊 Taille VM: {{ selectedVM.disk_gb }}GB
             </p>
-          </div>
-
-          <!-- Activer la réplication -->
-          <div class="flex items-center gap-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
-            <input
-              v-model="form.is_active"
-              type="checkbox"
-              id="is_active"
-              class="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
-            />
-            <label for="is_active" class="flex-1 flex items-center gap-2 text-sm font-semibold text-gray-900 cursor-pointer">
-              <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              Activer la réplication immédiatement
-            </label>
           </div>
         </div>
 
@@ -1089,28 +968,12 @@
                 </div>
               </div>
               <div class="flex-1">
-                <h4 class="text-lg font-bold text-gray-900 mb-2">Replica de la Même VM Détectée</h4>
+                <h4 class="text-lg font-bold text-gray-900 mb-2">Replica Existante</h4>
                 <p class="text-gray-700 leading-relaxed">
-                  La VM <strong class="text-blue-600">{{ replicaExistsModalData.vmName }}</strong> possède déjà une replica <strong class="text-purple-600">{{ replicaExistsModalData.replicaName }}</strong> sur le serveur de destination.
+                  Une VM replica <strong class="text-purple-600">{{ replicaExistsModalData.replicaName }}</strong> existe déjà sur le serveur de destination.
                 </p>
-                <div class="mt-3 bg-white rounded-lg p-3 border border-purple-200">
-                  <div class="flex items-center gap-2 text-sm">
-                    <svg class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                      <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
-                    </svg>
-                    <span class="font-medium text-gray-700">VM Source :</span>
-                    <span class="text-blue-600 font-semibold">{{ replicaExistsModalData.vmName }}</span>
-                  </div>
-                  <div class="flex items-center gap-2 text-sm mt-2">
-                    <svg class="w-5 h-5 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
-                      <path fill-rule="evenodd" d="M4 2a2 2 0 00-2 2v11a3 3 0 106 0V4a2 2 0 00-2-2H4zm1 14a1 1 0 100-2 1 1 0 000 2zm5-1.757l4.9-4.9a2 2 0 000-2.828L13.485 5.1a2 2 0 00-2.828 0L10 5.757v8.486zM16 18H9.071l6-6H16a2 2 0 012 2v2a2 2 0 01-2 2z" clip-rule="evenodd" />
-                    </svg>
-                    <span class="font-medium text-gray-700">Replica Existante :</span>
-                    <span class="text-purple-600 font-semibold">{{ replicaExistsModalData.replicaName }}</span>
-                  </div>
-                </div>
                 <p class="text-gray-600 mt-3 text-sm">
-                  ⚠️ Pour lancer une nouvelle réplication de <strong>{{ replicaExistsModalData.vmName }}</strong>, l'ancienne replica doit être supprimée d'abord.
+                  📦 Cette replica est probablement issue d'une réplication précédente. Pour continuer la nouvelle réplication, vous devez supprimer l'ancienne replica.
                 </p>
               </div>
             </div>
@@ -1254,7 +1117,6 @@ const showReplicaExistsModal = ref(false)
 const replicaExistsModalData = ref({
   replicationId: null,
   replicaName: '',
-  vmName: '', // Nom de la VM source
   deleting: false
 })
 
@@ -1307,6 +1169,16 @@ const selectedDatastore = computed(() => {
   return destinationDatastores.value.find(ds => ds.name === form.value.destination_datastore)
 })
 
+// Computed property for suggested interval based on VM size
+const suggestedInterval = computed(() => {
+  if (!selectedVM.value) return 60
+  const vmSize = selectedVM.value.disk_gb || 0
+  if (vmSize < 20) return 15
+  if (vmSize < 100) return 30
+  if (vmSize < 500) return 60
+  return 120
+})
+
 // Watch destination server changes to fetch its datastores
 watch(() => form.value.destination_server, async (newServerId) => {
   if (!newServerId) {
@@ -1318,49 +1190,17 @@ watch(() => form.value.destination_server, async (newServerId) => {
   await fetchDatastores(newServerId)
 })
 
-// Watch VM selection to auto-calculate minimum interval
-watch(() => form.value.virtual_machine, async (newVmId) => {
-  if (!newVmId) return
-
-  try {
-    const response = await virtualMachinesAPI.getMinimumInterval(newVmId)
-    const minInterval = response.data.minimum_interval_minutes
-    const vmSize = response.data.vm_size_gb
-    const category = response.data.category
-
-    console.log(`[AUTO-INTERVAL] VM sélectionnée: ${vmSize} GB (${category}) → Intervalle minimum: ${minInterval} min`)
-
-    // Auto-remplir l'intervalle avec le minimum recommandé
-    form.value.replication_interval_minutes = minInterval
-
-    // Afficher un toast informatif
-    toast.info(`Intervalle auto-calculé: ${minInterval} min pour une VM de ${vmSize} GB`, { duration: 4000 })
-
-  } catch (error) {
-    console.error('[AUTO-INTERVAL] Erreur calcul intervalle:', error)
-    // Garder la valeur par défaut de 60 en cas d'erreur
-  }
-})
-
 onMounted(() => {
   fetchData()
 
   // Restaurer les réplications en cours depuis le store après chargement
   setTimeout(() => {
     const activeReplications = operationsStore.getOperationsByType('replication')
-    console.log('[REPLICATION-RESTORE] Réplications actives trouvées:', activeReplications.length)
-
     if (activeReplications.length > 0) {
-      // Reprendre le polling pour chaque réplication active (même si completed récemment)
+      // Reprendre le polling pour chaque réplication active
       activeReplications.forEach(op => {
-        console.log('[REPLICATION-RESTORE] Tentative restauration:', op.id, 'Status:', op.status, 'Progress:', op.progress)
-
-        // Restaurer si pas completed/error/cancelled ET si progress < 100
-        if (!['completed', 'error', 'cancelled'].includes(op.status) || op.progress < 100) {
-          console.log('[REPLICATION-RESTORE] ✓ Restauration de la réplication', op.id)
+        if (op.status === 'running' || op.status === 'starting' || op.status === 'in_progress') {
           resumeReplication(op.id, op)
-        } else {
-          console.log('[REPLICATION-RESTORE] ✗ Skip (terminée ou annulée)')
         }
       })
     }
@@ -1519,14 +1359,9 @@ function getNextSyncCountdown(replication) {
   const now = new Date()
   const diffSeconds = Math.floor((nextSync - now) / 1000)
 
-  // Si en retard (dans le passé)
-  if (diffSeconds < 0) {
-    return { text: 'En cours...', color: 'text-blue-600 animate-pulse', isImminent: true }
-  }
-
-  // Si très proche (< 30 secondes)
+  // Si en retard ou très proche (< 30 secondes)
   if (diffSeconds < 30) {
-    return { text: 'Imminent (< 30s)', color: 'text-green-600 animate-pulse', isImminent: true }
+    return { text: 'Imminent', color: 'text-green-600 animate-pulse', isImminent: true }
   }
 
   // Afficher en minutes et secondes
@@ -1536,7 +1371,7 @@ function getNextSyncCountdown(replication) {
   if (minutes > 0) {
     return {
       text: `Dans ${minutes}m ${seconds}s`,
-      color: minutes <= 2 ? 'text-orange-500 font-medium' : 'text-gray-700',
+      color: minutes <= 2 ? 'text-orange-500' : 'text-gray-700',
       isImminent: minutes <= 2
     }
   } else {
@@ -1552,16 +1387,14 @@ function isSyncing(replication) {
   return replication.status === 'syncing' || replicatingId.value === replication.id
 }
 
-function getSyncProgress(replicationId) {
-  // Si c'est la réplication en cours, retourner le progress actuel
-  if (replicatingId.value === replicationId) {
-    return replicationProgress.value
-  }
+function getReplicationProgress(replicationId) {
+  const operation = operationsStore.getOperation('replication', replicationId)
+  return operation?.progress || 0
+}
 
-  // Sinon, chercher dans operationsStore au cas où
-  const activeOps = operationsStore.getOperationsByType('replication')
-  const op = activeOps.find(o => o.id === replicationId)
-  return op?.progress || 0
+function getReplicationMessage(replicationId) {
+  const operation = operationsStore.getOperation('replication', replicationId)
+  return operation?.message || ''
 }
 
 function isIntervalTooShort(replication) {
@@ -1604,12 +1437,45 @@ function formatDatastoreInfo(datastore) {
   return `${freeGB}GB libre / ${usedGB}GB utilisé (${capacityGB}GB total)`
 }
 
+// Auto-generate replication name from VM
+function updateFormName() {
+  if (selectedVM.value && !editingReplication.value) {
+    const destServer = esxiServers.value.find(s => s.id === form.value.destination_server)
+    form.value.name = `Replication ${selectedVM.value.name}`
+    if (destServer) {
+      form.value.name += ` → ${destServer.name}`
+    }
+  }
+}
+
+// Apply suggested interval
+function setSuggestedInterval() {
+  form.value.replication_interval_minutes = suggestedInterval.value
+}
+
 async function saveReplication() {
   saving.value = true
   try {
+    // Préparer les données avec les valeurs par défaut pour les champs masqués
+    const dataToSend = {
+      ...form.value,
+      failover_mode: form.value.failover_mode || 'manual',
+      auto_failover_threshold_minutes: form.value.auto_failover_threshold_minutes || 15,
+      is_active: form.value.is_active !== undefined ? form.value.is_active : true
+    }
+
+    // Auto-générer le nom si vide
+    if (!dataToSend.name && selectedVM.value) {
+      const destServer = esxiServers.value.find(s => s.id === form.value.destination_server)
+      dataToSend.name = `Replication ${selectedVM.value.name}`
+      if (destServer) {
+        dataToSend.name += ` → ${destServer.name}`
+      }
+    }
+
     if (editingReplication.value) {
       // Mode édition
-      await vmReplicationsAPI.update(editingReplication.value.id, form.value)
+      await vmReplicationsAPI.update(editingReplication.value.id, dataToSend)
       toast.success('Réplication mise à jour')
     } else {
       // Mode création - Vérifier si une réplication existe déjà
@@ -1631,7 +1497,7 @@ async function saveReplication() {
       }
 
       // Créer la nouvelle réplication
-      await vmReplicationsAPI.create(form.value)
+      await vmReplicationsAPI.create(dataToSend)
       toast.success('Réplication créée')
     }
     closeModal()
@@ -1677,16 +1543,10 @@ async function saveReplication() {
         toast.error(`Serveur de destination invalide: ${errors.destination_server[0]}`)
         return
       }
-
-      // Erreur d'intervalle trop court
-      if (errors.replication_interval_minutes) {
-        toast.error(`⚠️ ${errors.replication_interval_minutes[0]}`, { duration: 6000 })
-        return
-      }
     }
 
     // Erreur générique
-    toast.error('Erreur lors de la sauvegarde de la réplication')
+    toast.error('Erreur, la VM sélectionnée est déjà répliquée sur ce serveur')
   } finally {
     saving.value = false
   }
@@ -1694,7 +1554,7 @@ async function saveReplication() {
 
 function editReplication(replication) {
   editingReplication.value = replication
-  // Ne copier que les champs modifiables, pas les champs read-only
+  // Copier uniquement les champs éditables
   form.value = {
     name: replication.name,
     virtual_machine: replication.virtual_machine,
@@ -1729,24 +1589,20 @@ async function startReplication(replication) {
   if (!confirm(`Voulez-vous démarrer la réplication de ${replication.vm_name} ?`)) return
 
   try {
-    // TOUJOURS vérifier si une replica existe déjà AVANT chaque réplication
-    console.log('[CHECK-REPLICA] Vérification replica pour VM:', replication.vm_name)
+    // Vérifier si une replica existe déjà
     const checkResponse = await vmReplicationsAPI.checkReplicaExists(replication.id)
 
     if (checkResponse.data.exists) {
-      console.log('[CHECK-REPLICA] ⚠️ Replica trouvée:', checkResponse.data.replica_name)
-      // Afficher le modal de confirmation - OBLIGATOIRE pour la même VM
+      // Afficher le modal de confirmation
       replicaExistsModalData.value = {
         replicationId: replication.id,
         replicaName: checkResponse.data.replica_name,
-        vmName: replication.vm_name, // Ajouter le nom de la VM source
         deleting: false
       }
       showReplicaExistsModal.value = true
       return
     }
 
-    console.log('[CHECK-REPLICA] ✓ Aucune replica trouvée, démarrage...')
     // Pas de replica existante, continuer normalement
     await startReplicationWithoutCheck(replication)
 
@@ -1911,28 +1767,17 @@ async function startReplicationWithoutCheck(replication) {
 // Fonction pour reprendre une réplication en cours après rechargement de page
 function resumeReplication(replicationId, opData) {
   const replication = replications.value.find(r => r.id === replicationId)
-  if (!replication) {
-    console.warn('[REPLICATION-RESTORE] Réplication introuvable:', replicationId)
-    return
-  }
-
-  console.log('[REPLICATION-RESTORE] Restauration des données:', {
-    replicationId,
-    progress: opData.progress,
-    status: opData.status,
-    currentReplicationId: opData.currentReplicationId
-  })
+  if (!replication) return
 
   replicatingId.value = replicationId
-  replicationProgress.value = opData.progress || 0
-  replicationStatus.value = opData.status || 'starting'
-  replicationMessage.value = opData.message || 'Synchronisation en cours...'
+  replicationProgress.value = opData.progress
+  replicationStatus.value = opData.status
+  replicationMessage.value = opData.message
 
   // Relancer le polling pour suivre la progression
-  if (!currentReplicationId.value && opData.currentReplicationId) {
-    // On utilise opData.currentReplicationId qui contient le UUID de la réplication en cours
+  if (!currentReplicationId.value) {
+    // On utilise opData.id qui contient le UUID de la réplication en cours
     currentReplicationId.value = opData.currentReplicationId
-    console.log('[REPLICATION-RESTORE] Reprise du polling avec UUID:', opData.currentReplicationId)
 
     pollInterval = setInterval(async () => {
       try {
@@ -2235,30 +2080,6 @@ async function performFailover() {
   } catch (error) {
     console.error('Erreur failover:', error)
     toast.error('Le basculement a échoué')
-  } finally {
-    saving.value = false
-  }
-}
-
-async function triggerFailback(replication) {
-  if (!confirm(
-    `🔄 Retour à la normale ?\n\n` +
-    `Cette action va :\n` +
-    `✅ Rallumer la VM master: ${replication.vm_name} sur ${replication.source_server_name}\n` +
-    `🛑 Arrêter la VM slave sur ${replication.destination_server_name}\n\n` +
-    `Confirmer le failback ?`
-  )) return
-
-  saving.value = true
-  try {
-    const response = await vmReplicationsAPI.performFailback(replication.id)
-    toast.success('✅ Failback réussi - Retour à la normale')
-    console.log('[FAILBACK] Succès:', response.data)
-    fetchData()
-    fetchAllVMStates()
-  } catch (error) {
-    console.error('Erreur failback:', error)
-    toast.error(`❌ Erreur failback: ${error.response?.data?.error || error.message}`)
   } finally {
     saving.value = false
   }
