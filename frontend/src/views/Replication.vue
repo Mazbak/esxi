@@ -289,13 +289,27 @@
 
                 <!-- Status -->
                 <td class="px-4 py-4 whitespace-nowrap">
-                  <span :class="getStatusClass(replication.status)" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
-                    {{ replication.status_display }}
-                  </span>
-                  <div v-if="replication.failover_mode === 'automatic'" class="mt-1">
-                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                      Auto-Failover
+                  <div class="space-y-1">
+                    <span :class="getStatusClass(replication.status)" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full">
+                      {{ replication.status_display }}
                     </span>
+
+                    <!-- Failover Active Badge -->
+                    <div v-if="replication.failover_active" class="mt-1">
+                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 animate-pulse">
+                        ⚠️ FAILOVER ACTIF
+                      </span>
+                    </div>
+
+                    <!-- Auto-Failover/Failback Badges -->
+                    <div v-if="replication.failover_mode === 'automatic'" class="mt-1 flex flex-col gap-1">
+                      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                        🔄 Auto-Failover
+                      </span>
+                      <span v-if="replication.failback_enabled" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                        ↩️ Auto-Failback
+                      </span>
+                    </div>
                   </div>
                 </td>
 
@@ -318,13 +332,24 @@
                     </svg>
                   </button>
                   <button
+                    v-if="!replication.failover_active"
                     @click="showFailoverModal(replication)"
                     :disabled="!replication.is_active"
                     class="text-orange-600 hover:text-orange-900 disabled:text-gray-400"
-                    title="Failover manuel"
+                    title="Déclencher failover manuel"
                   >
                     <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </button>
+                  <button
+                    v-else
+                    @click="triggerFailback(replication)"
+                    class="text-green-600 hover:text-green-900"
+                    title="Déclencher failback (retour à la normale)"
+                  >
+                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
                     </svg>
                   </button>
                   <button
@@ -595,6 +620,73 @@
             <p v-if="selectedVM" class="mt-2 text-xs text-gray-600">
               📊 Taille VM: {{ selectedVM.disk_gb }}GB
             </p>
+          </div>
+
+          <!-- Failover/Failback Configuration -->
+          <div class="group p-4 bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-200 rounded-xl">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3">
+              <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              High Availability (HA) - Failover Automatique
+            </label>
+
+            <!-- Toggle Failover Mode -->
+            <div class="flex items-center justify-between mb-3 p-3 bg-white rounded-lg shadow-sm">
+              <div class="flex-1">
+                <div class="font-medium text-gray-900">Activer le failover automatique</div>
+                <div class="text-xs text-gray-600 mt-1">Bascule automatiquement sur la replica en cas de panne du serveur master</div>
+              </div>
+              <button
+                @click="form.failover_mode = form.failover_mode === 'automatic' ? 'manual' : 'automatic'"
+                type="button"
+                :class="form.failover_mode === 'automatic' ? 'bg-orange-600' : 'bg-gray-300'"
+                class="relative inline-flex h-7 w-14 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+              >
+                <span
+                  :class="form.failover_mode === 'automatic' ? 'translate-x-7' : 'translate-x-0'"
+                  class="pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                />
+              </button>
+            </div>
+
+            <!-- Auto-Failover Threshold (visible seulement si auto) -->
+            <div v-if="form.failover_mode === 'automatic'" class="mb-3">
+              <label class="text-xs font-medium text-gray-700">Délai avant failover automatique (minutes)</label>
+              <input
+                v-model.number="form.auto_failover_threshold_minutes"
+                type="number"
+                min="1"
+                step="1"
+                class="mt-1 w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 transition-all outline-none text-gray-900"
+              />
+              <p class="mt-1 text-xs text-gray-600">⏱️ Temps d'attente avant de déclencher le failover (défaut: 15 min)</p>
+            </div>
+
+            <!-- Toggle Failback Enabled (visible seulement si auto-failover activé) -->
+            <div v-if="form.failover_mode === 'automatic'" class="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm">
+              <div class="flex-1">
+                <div class="font-medium text-gray-900">Activer le failback automatique</div>
+                <div class="text-xs text-gray-600 mt-1">Retour automatique sur le master quand il redevient disponible</div>
+              </div>
+              <button
+                @click="form.failback_enabled = !form.failback_enabled"
+                type="button"
+                :class="form.failback_enabled ? 'bg-green-600' : 'bg-gray-300'"
+                class="relative inline-flex h-7 w-14 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+              >
+                <span
+                  :class="form.failback_enabled ? 'translate-x-7' : 'translate-x-0'"
+                  class="pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                />
+              </button>
+            </div>
+
+            <div v-if="form.failover_mode === 'manual'" class="mt-2 p-3 bg-gray-100 rounded-lg">
+              <p class="text-xs text-gray-600">
+                💡 En mode manuel, vous devez déclencher le failover/failback vous-même depuis l'interface
+              </p>
+            </div>
           </div>
         </div>
 
@@ -1145,6 +1237,7 @@ const form = ref({
   replication_interval_minutes: 60,
   failover_mode: 'manual',
   auto_failover_threshold_minutes: 15,
+  failback_enabled: false,
   is_active: true
 })
 
@@ -1575,6 +1668,7 @@ function editReplication(replication) {
     replication_interval_minutes: replication.replication_interval_minutes,
     failover_mode: replication.failover_mode,
     auto_failover_threshold_minutes: replication.auto_failover_threshold_minutes,
+    failback_enabled: replication.failback_enabled || false,
     is_active: replication.is_active
   }
   showCreateModal.value = true
@@ -2094,6 +2188,28 @@ async function performFailover() {
     toast.error('Le basculement a échoué')
   } finally {
     saving.value = false
+  }
+}
+
+async function triggerFailback(replication) {
+  if (!confirm(
+    `Voulez-vous vraiment déclencher le FAILBACK pour "${replication.vm_name}" ?\n\n` +
+    `Cela va :\n` +
+    `✓ Arrêter la VM replica sur ${replication.destination_server_name}\n` +
+    `✓ Redémarrer la VM master sur ${replication.source_server_name}\n` +
+    `✓ Rétablir le fonctionnement normal\n\n` +
+    `⚠️ Assurez-vous que le serveur master est opérationnel !`
+  )) return
+
+  try {
+    toast.info('Déclenchement du failback en cours...')
+    const response = await vmReplicationsAPI.performFailback(replication.id)
+    toast.success(response.data.message || 'Failback effectué avec succès')
+    fetchData()
+  } catch (error) {
+    console.error('Erreur failback:', error)
+    const errorMsg = error.response?.data?.error || 'Le failback a échoué'
+    toast.error(errorMsg, { duration: 6000 })
   }
 }
 
