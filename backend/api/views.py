@@ -2971,6 +2971,11 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
         print(f"[DEBUG] Relations pré-chargées: {replication.name}", file=sys.stderr)
         logger.info(f"[API] Réplication chargée avec relations: {replication.name}")
 
+        # Marquer la réplication comme en cours de synchronisation
+        replication.status = 'syncing'
+        replication.save()
+        print(f"[DEBUG] Statut mis à jour: syncing", file=sys.stderr)
+
         if not replication.is_active:
             print(f"[DEBUG] Réplication inactive, retour erreur", file=sys.stderr)
             return Response(
