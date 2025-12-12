@@ -1,207 +1,134 @@
 <template>
   <Modal :show="show" :title="isEdit ? 'Modifier la planification' : 'Nouvelle planification'" @close="$emit('close')">
-    <form @submit.prevent="handleSubmit" class="space-y-4">
-      <div>
-        <label class="label">Machine virtuelle</label>
-        <select v-model="form.virtual_machine" required class="input-field">
-          <option value="">Sélectionnez une VM</option>
-          <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">
-            {{ vm.name }} ({{ vm.guest_os }})
-          </option>
-        </select>
-      </div>
-
-      <!-- Stratégie de Backup -->
-      <div>
-        <label class="label">Stratégie de backup</label>
-        <select v-model="form.backup_strategy" required class="input-field">
-          <option value="full_weekly">Full hebdomadaire + Incremental quotidien</option>
-          <option value="full_only">Full uniquement</option>
-          <option value="incremental_only">Incremental uniquement</option>
-          <option value="smart">Smart (Décision automatique)</option>
-        </select>
-        <p class="mt-1 text-xs text-gray-500">
-          {{ getStrategyDescription(form.backup_strategy) }}
-        </p>
-      </div>
-
-      <!-- Mode de Backup (OVF vs VMDK) -->
-      <div class="border-2 rounded-lg p-4" :class="form.backup_mode === 'ovf' ? 'border-green-500 bg-green-50' : 'border-gray-300'">
-        <label class="label flex items-center">
-          <svg class="w-5 h-5 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    <form @submit.prevent="handleSubmit" class="space-y-6">
+      <!-- Machine virtuelle -->
+      <div class="group">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
           </svg>
-          Mode de backup (Recommandé: OVF)
+          Machine virtuelle
         </label>
-        <select v-model="form.backup_mode" required class="input-field mt-2">
-          <option value="ovf">✅ OVF Export (Optimisé thin-provisioning - Recommandé)</option>
-          <option value="vmdk">⚠️ VMDK Direct (Copie disque complet)</option>
-        </select>
-        <div v-if="form.backup_mode === 'ovf'" class="mt-2 p-3 bg-green-100 rounded-lg">
-          <p class="text-sm text-green-800 font-medium">✅ Mode OVF (Recommandé)</p>
-          <ul class="mt-1 text-xs text-green-700 list-disc list-inside space-y-1">
-            <li>Télécharge uniquement les données réelles (~34.6%)</li>
-            <li>Gère correctement le thin provisioning</li>
-            <li>Format standard VMware (100% restaurable)</li>
-            <li>Exemple: VM 500GB alloué, 50GB utilisés → backup 17GB</li>
-            <li>Beaucoup plus rapide et économe en espace disque</li>
-          </ul>
-        </div>
-        <div v-else class="mt-2 p-3 bg-yellow-100 rounded-lg">
-          <p class="text-sm text-yellow-800 font-medium">⚠️ Mode VMDK (Legacy)</p>
-          <ul class="mt-1 text-xs text-yellow-700 list-disc list-inside space-y-1">
-            <li>Télécharge le fichier VMDK complet (100%)</li>
-            <li>Ne gère PAS le thin provisioning</li>
-            <li>Exemple: VM 500GB alloué, 50GB utilisés → backup 500GB</li>
-            <li>Beaucoup plus lent et consomme énormément d'espace</li>
-            <li>À utiliser uniquement si besoin spécifique</li>
-          </ul>
+        <div class="relative">
+          <select v-model="form.virtual_machine" required class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:ring-4 focus:ring-purple-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer">
+            <option value="">Sélectionner une VM à sauvegarder...</option>
+            <option v-for="vm in virtualMachines" :key="vm.id" :value="vm.id">
+              {{ vm.name }} ({{ vm.guest_os }})
+            </option>
+          </select>
+          <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
         </div>
       </div>
 
-      <!-- Intervalle Full Backup (pour full_weekly) -->
-      <div v-if="form.backup_strategy === 'full_weekly'">
-        <label class="label">Intervalle Full Backup (jours)</label>
-        <input
-          v-model.number="form.full_backup_interval_days"
-          type="number"
-          min="1"
-          max="365"
-          required
-          class="input-field"
-          placeholder="7"
-        >
-        <p class="mt-1 text-xs text-gray-500">
-          Un Full backup sera créé tous les {{ form.full_backup_interval_days }} jours, avec des Incrementals entre-temps
-        </p>
-      </div>
-
-      <!-- Remote Storage -->
-      <div>
-        <label class="label">Stockage distant</label>
-        <select v-model.number="form.remote_storage" class="input-field">
-          <option :value="null">Stockage par défaut</option>
-          <option v-for="storage in remoteStorages" :key="storage.id" :value="storage.id">
-            {{ storage.name }} ({{ storage.protocol.toUpperCase() }})
-          </option>
-        </select>
-      </div>
-
-      <!-- Backup Configuration -->
-      <div>
-        <label class="label">Configuration de backup</label>
-        <select v-model.number="form.backup_configuration" class="input-field">
-          <option :value="null">Configuration par défaut</option>
-          <option v-for="config in backupConfigs" :key="config.id" :value="config.id">
-            {{ config.name }}
-          </option>
-        </select>
-      </div>
-
-      <div>
-        <label class="label">Fréquence</label>
-        <select v-model="form.frequency" required class="input-field">
-          <option value="daily">Quotidienne</option>
-          <option value="weekly">Hebdomadaire</option>
-          <option value="monthly">Mensuelle</option>
-          <option value="custom">Personnalisée (intervalle en heures)</option>
-        </select>
-      </div>
-
-      <!-- Intervalle personnalisé en heures -->
-      <div v-if="form.frequency === 'custom'">
-        <label class="label">Intervalle (heures)</label>
-        <input
-          v-model.number="form.interval_hours"
-          type="number"
-          min="1"
-          max="8760"
-          required
-          class="input-field"
-          placeholder="24"
-        >
-        <p class="mt-1 text-xs text-gray-500">
-          La sauvegarde sera exécutée toutes les {{ form.interval_hours }} heures
-        </p>
+      <!-- Fréquence -->
+      <div class="group">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          Fréquence de sauvegarde
+        </label>
+        <div class="relative">
+          <select v-model="form.frequency" required class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer">
+            <option value="daily">📅 Quotidienne (tous les jours)</option>
+            <option value="weekly">📆 Hebdomadaire (une fois par semaine)</option>
+            <option value="monthly">🗓️ Mensuelle (une fois par mois)</option>
+          </select>
+          <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
       </div>
 
       <!-- Heure d'exécution -->
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="label">Heure</label>
-          <select v-model.number="form.time_hour" required class="input-field">
-            <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2, '0') }}h</option>
-          </select>
+      <div class="group">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Heure d'exécution
+        </label>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="relative">
+            <select v-model.number="form.time_hour" required class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-4 focus:ring-green-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer">
+              <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2, '0') }}h</option>
+            </select>
+            <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+          <div class="relative">
+            <select v-model.number="form.time_minute" required class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-4 focus:ring-green-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer">
+              <option v-for="m in [0, 15, 30, 45]" :key="m" :value="m">{{ String(m).padStart(2, '0') }} min</option>
+            </select>
+            <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
         </div>
-        <div>
-          <label class="label">Minute</label>
-          <select v-model.number="form.time_minute" required class="input-field">
-            <option v-for="m in [0, 15, 30, 45]" :key="m" :value="m">{{ String(m).padStart(2, '0') }}</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Jour de la semaine (pour weekly) -->
-      <div v-if="form.frequency === 'weekly'">
-        <label class="label">Jour de la semaine</label>
-        <select v-model.number="form.day_of_week" required class="input-field">
-          <option :value="0">Lundi</option>
-          <option :value="1">Mardi</option>
-          <option :value="2">Mercredi</option>
-          <option :value="3">Jeudi</option>
-          <option :value="4">Vendredi</option>
-          <option :value="5">Samedi</option>
-          <option :value="6">Dimanche</option>
-        </select>
-      </div>
-
-      <!-- Jour du mois (pour monthly) -->
-      <div v-if="form.frequency === 'monthly'">
-        <label class="label">Jour du mois</label>
-        <select v-model.number="form.day_of_month" required class="input-field">
-          <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
-        </select>
-        <p class="mt-1 text-sm text-gray-500">
-          Si le jour n'existe pas dans un mois (ex: 31 février), le dernier jour du mois sera utilisé
+        <p class="mt-2 text-xs text-gray-600">
+          🕐 Sauvegarde à {{ String(form.time_hour).padStart(2, '0') }}:{{ String(form.time_minute).padStart(2, '0') }}
         </p>
       </div>
 
-      <div class="flex items-center">
-        <input
-          v-model="form.is_active"
-          type="checkbox"
-          id="is_active"
-          class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-        >
-        <label for="is_active" class="ml-2 block text-sm text-gray-700">
-          Activer la planification
-        </label>
-      </div>
-
-      <!-- Aperçu de la planification -->
-      <div v-if="schedulePreview" class="p-4 bg-green-50 border border-green-200 rounded-lg">
-        <div class="flex">
-          <svg class="w-5 h-5 text-green-600 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <!-- Jour de la semaine (pour weekly) -->
+      <div v-if="form.frequency === 'weekly'" class="group">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
-          <div class="text-sm text-green-800">
-            <p class="font-medium">Planification: {{ schedulePreview }}</p>
-          </div>
+          Jour de la semaine
+        </label>
+        <div class="relative">
+          <select v-model.number="form.day_of_week" required class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer">
+            <option :value="0">Lundi</option>
+            <option :value="1">Mardi</option>
+            <option :value="2">Mercredi</option>
+            <option :value="3">Jeudi</option>
+            <option :value="4">Vendredi</option>
+            <option :value="5">Samedi</option>
+            <option :value="6">Dimanche</option>
+          </select>
+          <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
         </div>
       </div>
 
-      <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <div class="flex">
-          <svg class="w-5 h-5 text-blue-600 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+      <!-- Jour du mois (pour monthly) -->
+      <div v-if="form.frequency === 'monthly'" class="group">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
+          <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
-          <div class="text-sm text-blue-800">
-            <p class="font-medium mb-1">Information</p>
-            <ul class="list-disc list-inside space-y-1">
-              <li>Les sauvegardes automatiques seront exécutées selon la fréquence choisie</li>
-              <li>Vous pouvez activer ou désactiver la planification à tout moment</li>
-              <li>Les paramètres de sauvegarde (emplacement, type) seront configurés automatiquement</li>
-            </ul>
+          Jour du mois
+        </label>
+        <div class="relative">
+          <select v-model.number="form.day_of_month" required class="w-full px-4 py-3 pr-10 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-4 focus:ring-orange-500/20 transition-all outline-none text-gray-900 appearance-none bg-white cursor-pointer">
+            <option v-for="d in 31" :key="d" :value="d">Le {{ d }}</option>
+          </select>
+          <svg class="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+        <p class="mt-2 text-xs text-gray-600">
+          💡 Si le jour n'existe pas (ex: 31 février), le dernier jour du mois sera utilisé
+        </p>
+      </div>
+
+      <!-- Aperçu de la planification -->
+      <div v-if="schedulePreview" class="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl shadow-sm">
+        <div class="flex items-center gap-3">
+          <div class="p-2 bg-white rounded-lg shadow-sm">
+            <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-xs text-green-700 font-medium mb-1">Planification configurée</p>
+            <p class="text-sm text-green-900 font-semibold">✓ {{ schedulePreview }}</p>
           </div>
         </div>
       </div>

@@ -780,26 +780,33 @@ class ReplicationService:
                 raise Exception(f"Impossible de se connecter au serveur de destination {destination_server.hostname}")
             logger.info(f"[REPLICATION] [OK] Connecté au serveur de destination")
 
-            # Récupérer le premier datastore disponible (70%)
+            # Utiliser le datastore configuré dans la réplication (70%)
             if progress_callback:
-                progress_callback(70, 'deploying', 'Recherche du datastore de destination...')
+                progress_callback(70, 'deploying', 'Vérification du datastore de destination...')
 
-            logger.info(f"[REPLICATION] Appel de get_datastores() sur {destination_server.hostname}")
+            dest_datastore = replication.destination_datastore
+            logger.info(f"[REPLICATION] Datastore de destination configuré: {dest_datastore}")
+
+            # Vérifier que le datastore existe sur le serveur de destination
+            logger.info(f"[REPLICATION] Vérification du datastore sur {destination_server.hostname}...")
             try:
                 datastores_info = vmware_service.get_datastores()
-                logger.info(f"[REPLICATION] Résultat get_datastores(): {datastores_info}")
+                logger.info(f"[REPLICATION] Datastores disponibles: {[ds['name'] for ds in datastores_info]}")
+
+                # Vérifier que le datastore configuré existe
+                datastore_found = False
+                for ds in datastores_info:
+                    if ds['name'] == dest_datastore:
+                        datastore_found = True
+                        logger.info(f"[REPLICATION] ✓ Datastore {dest_datastore} trouvé (capacité: {ds['capacity_gb']} GB, libre: {ds['free_space_gb']} GB)")
+                        break
+
+                if not datastore_found:
+                    raise Exception(f"Le datastore '{dest_datastore}' n'existe pas sur le serveur {destination_server.hostname}. Datastores disponibles: {[ds['name'] for ds in datastores_info]}")
+
             except Exception as ds_err:
-                logger.error(f"[REPLICATION] Erreur lors de get_datastores(): {ds_err}", exc_info=True)
-                raise Exception(f"Impossible de récupérer les datastores: {ds_err}")
-
-            # datastores_info est une LISTE de datastores, pas un dictionnaire
-            if not datastores_info or len(datastores_info) == 0:
-                logger.error(f"[REPLICATION] datastores_info est vide: {datastores_info}")
-                raise Exception("Aucun datastore disponible sur le serveur destination")
-
-            # Prendre le premier datastore accessible
-            dest_datastore = datastores_info[0]['name']
-            logger.info(f"[REPLICATION] Datastore destination sélectionné: {dest_datastore} (capacité: {datastores_info[0]['capacity_gb']} GB, libre: {datastores_info[0]['free_space_gb']} GB)")
+                logger.error(f"[REPLICATION] Erreur lors de la vérification du datastore: {ds_err}", exc_info=True)
+                raise Exception(f"Erreur vérification datastore: {ds_err}")
 
             # Déployer l'OVF (75% → 90%)
             if progress_callback:
@@ -1273,18 +1280,19 @@ class ReplicationService:
             si = self._connect_to_server(dest_server)
 
             # Trouver la VM répliquée sur le serveur de destination
-            # La VM répliquée a le même nom que la VM source
+            # La VM répliquée a le suffixe "_replica"
             vm_name = replication.virtual_machine.name
-            logger.info(f"[REPLICATION DELETE] Recherche de la VM: {vm_name}")
+            replica_vm_name = f"{vm_name}_replica"
+            logger.info(f"[REPLICATION DELETE] Recherche de la VM replica: {replica_vm_name}")
 
-            vm = self._get_vm_by_name(si, vm_name)
+            vm = self._get_vm_by_name(si, replica_vm_name)
 
             if not vm:
-                logger.warning(f"[REPLICATION DELETE] VM {vm_name} non trouvée sur le serveur de destination")
+                logger.warning(f"[REPLICATION DELETE] VM replica {replica_vm_name} non trouvée sur le serveur de destination")
                 Disconnect(si)
                 return {
                     'success': True,
-                    'message': f'VM {vm_name} non trouvée sur le serveur de destination (peut-être déjà supprimée)'
+                    'message': f'VM replica {replica_vm_name} non trouvée sur le serveur de destination (peut-être déjà supprimée)'
                 }
 
             # Vérifier l'état de la VM
@@ -1293,7 +1301,7 @@ class ReplicationService:
 
             # Si la VM est allumée, l'éteindre d'abord
             if power_state == vim.VirtualMachinePowerState.poweredOn:
-                logger.info(f"[REPLICATION DELETE] Extinction de la VM {vm_name}...")
+                logger.info(f"[REPLICATION DELETE] Extinction de la VM replica {replica_vm_name}...")
                 try:
                     task = vm.PowerOffVM_Task()
                     # Attendre que la tâche se termine (timeout 60s)
@@ -1304,18 +1312,18 @@ class ReplicationService:
                         time.sleep(1)
                         elapsed += 1
                         if elapsed >= timeout:
-                            logger.warning(f"[REPLICATION DELETE] Timeout lors de l'extinction de la VM")
+                            logger.warning(f"[REPLICATION DELETE] Timeout lors de l'extinction de la VM replica")
                             break
 
                     if task.info.state == vim.TaskInfo.State.error:
                         logger.error(f"[REPLICATION DELETE] Erreur lors de l'extinction: {task.info.error}")
                     else:
-                        logger.info(f"[REPLICATION DELETE] VM éteinte avec succès")
+                        logger.info(f"[REPLICATION DELETE] VM replica éteinte avec succès")
                 except Exception as e:
                     logger.warning(f"[REPLICATION DELETE] Erreur lors de l'extinction (la VM sera supprimée quand même): {e}")
 
             # Supprimer la VM
-            logger.info(f"[REPLICATION DELETE] Suppression de la VM {vm_name}...")
+            logger.info(f"[REPLICATION DELETE] Suppression de la VM replica {replica_vm_name}...")
             try:
                 task = vm.Destroy_Task()
                 # Attendre que la tâche se termine (timeout 120s)
@@ -1326,11 +1334,11 @@ class ReplicationService:
                     time.sleep(1)
                     elapsed += 1
                     if elapsed >= timeout:
-                        logger.error(f"[REPLICATION DELETE] Timeout lors de la suppression de la VM")
+                        logger.error(f"[REPLICATION DELETE] Timeout lors de la suppression de la VM replica")
                         Disconnect(si)
                         return {
                             'success': False,
-                            'message': f'Timeout lors de la suppression de la VM {vm_name}'
+                            'message': f'Timeout lors de la suppression de la VM replica {replica_vm_name}'
                         }
 
                 if task.info.state == vim.TaskInfo.State.error:
@@ -1339,14 +1347,14 @@ class ReplicationService:
                     Disconnect(si)
                     return {
                         'success': False,
-                        'message': f'Erreur lors de la suppression de la VM {vm_name}: {error_msg}'
+                        'message': f'Erreur lors de la suppression de la VM replica {replica_vm_name}: {error_msg}'
                     }
 
-                logger.info(f"[REPLICATION DELETE] VM {vm_name} supprimée avec succès du serveur {dest_server.hostname}")
+                logger.info(f"[REPLICATION DELETE] VM replica {replica_vm_name} supprimée avec succès du serveur {dest_server.hostname}")
                 Disconnect(si)
                 return {
                     'success': True,
-                    'message': f'VM {vm_name} supprimée avec succès du serveur de destination'
+                    'message': f'VM replica {replica_vm_name} supprimée avec succès du serveur de destination'
                 }
 
             except Exception as e:
@@ -1354,7 +1362,7 @@ class ReplicationService:
                 Disconnect(si)
                 return {
                     'success': False,
-                    'message': f'Exception lors de la suppression de la VM {vm_name}: {str(e)}'
+                    'message': f'Exception lors de la suppression de la VM replica {replica_vm_name}: {str(e)}'
                 }
 
         except Exception as e:
