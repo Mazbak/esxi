@@ -1477,27 +1477,46 @@ function getNextSyncCountdown(replication) {
 }
 
 function isSyncing(replication) {
-  // Vérifier le status backend
-  if (replication.status === 'syncing') return true
-
-  // Vérifier l'état local
-  if (replicatingId.value === replication.id) return true
-
-  // CORRECTION: Vérifier dans operationsStore (pour persister après refresh)
-  const operation = operationsStore.getOperation('replication', replication.id)
-  if (operation && ['running', 'starting', 'in_progress'].includes(operation.status)) {
-    return true
+  // PRIORITÉ #1: Le statut backend est la source de vérité
+  // Si le backend dit que ce n'est PAS en cours de syncing, alors nettoyer le store local
+  if (replication.status !== 'syncing') {
+    // Nettoyer les données obsolètes du store si elles existent
+    const operation = operationsStore.getOperation('replication', replication.id)
+    if (operation) {
+      operationsStore.removeOperation('replication', replication.id)
+    }
+    // Retourner false immédiatement - le backend est la vérité
+    return false
   }
 
-  return false
+  // PRIORITÉ #2: Le backend dit "syncing", donc c'est bien en cours
+  return true
 }
 
 function getReplicationProgress(replicationId) {
+  // Trouver la réplication correspondante
+  const replication = replications.value.find(r => r.id === replicationId)
+
+  // Si le backend dit que ce n'est pas en cours, retourner 0
+  if (!replication || replication.status !== 'syncing') {
+    return 0
+  }
+
+  // Sinon, retourner la progression du store (si elle existe)
   const operation = operationsStore.getOperation('replication', replicationId)
   return operation?.progress || 0
 }
 
 function getReplicationMessage(replicationId) {
+  // Trouver la réplication correspondante
+  const replication = replications.value.find(r => r.id === replicationId)
+
+  // Si le backend dit que ce n'est pas en cours, retourner vide
+  if (!replication || replication.status !== 'syncing') {
+    return ''
+  }
+
+  // Sinon, retourner le message du store (si il existe)
   const operation = operationsStore.getOperation('replication', replicationId)
   return operation?.message || ''
 }
