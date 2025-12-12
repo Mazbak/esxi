@@ -2979,15 +2979,18 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Générer un ID unique pour cette réplication
-            replication_id = str(uuid.uuid4())
-            print(f"[DEBUG] ID réplication généré: {replication_id}", file=sys.stderr)
+            # IMPORTANT: Utiliser l'ID de la réplication comme clé (au lieu d'un UUID)
+            # Cela permet de retrouver la progression même après un refresh de la page
+            replication_id = str(replication.pk)
+            print(f"[DEBUG] Utilisation ID réplication: {replication_id}", file=sys.stderr)
 
             # Initialiser le cache avec une progression de 0% AVANT de démarrer le thread
             initial_progress = {
                 'progress': 0,
                 'status': 'starting',
-                'message': 'Démarrage de la réplication...'
+                'message': 'Démarrage de la réplication...',
+                'vm_name': replication.virtual_machine.name,
+                'started_at': timezone.now().isoformat()
             }
             cache.set(f'replication_progress_{replication_id}', initial_progress, timeout=3600)
             print(f"[DEBUG] Cache initialisé à 0%", file=sys.stderr)
@@ -3004,7 +3007,10 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 progress_data = {
                     'progress': int(progress_percent) if progress_percent >= 0 else 0,
                     'status': status_val,
-                    'message': message
+                    'message': message,
+                    'vm_name': replication.virtual_machine.name,
+                    'started_at': initial_progress.get('started_at'),  # Garder le timestamp de départ
+                    'updated_at': timezone.now().isoformat()
                 }
                 cache.set(f'replication_progress_{replication_id}', progress_data, timeout=3600)
                 logger.info(f"[API] Progression mise à jour: {progress_data}")
@@ -3116,6 +3122,34 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['get'])
+    def get_progress(self, request, pk=None):
+        """
+        Récupérer la progression d'une réplication en cours
+        Utilise l'ID de la VMReplication (pk) pour retrouver la progression même après un refresh
+        """
+        from django.core.cache import cache
+
+        try:
+            # Utiliser le pk comme clé de cache
+            progress_data = cache.get(f'replication_progress_{pk}')
+
+            if progress_data is None:
+                # Pas de réplication en cours pour cette VM
+                return Response({
+                    'progress': 0,
+                    'status': 'not_running',
+                    'message': 'Aucune réplication en cours'
+                })
+
+            return Response(progress_data)
+
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
         """Mettre en pause une réplication"""
@@ -3123,7 +3157,7 @@ class VMReplicationViewSet(viewsets.ModelViewSet):
         replication.status = 'paused'
         replication.is_active = False
         replication.save()
-        
+
         return Response({'message': 'Réplication mise en pause'})
     
     @action(detail=True, methods=['post'])

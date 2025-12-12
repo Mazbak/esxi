@@ -283,6 +283,7 @@ export const vmReplicationsAPI = {
   getVMStates: (id) => apiClient.get(`/vm-replications/${id}/vm_states/`),
   performFailover: (id, data) => apiClient.post(`/vm-replications/${id}/trigger_failover/`, data),
   performFailback: (id) => apiClient.post(`/vm-replications/${id}/trigger_failback/`),
+  getProgress: (id) => apiClient.get(`/vm-replications/${id}/get_progress/`),  // Nouveau: récupère la progression avec l'ID de réplication
 }
 
 // ===========================

@@ -1228,6 +1228,7 @@ const loadingHistory = ref(new Set()) // Set of replication IDs with history bei
 // Auto-refresh intervals
 let statesRefreshInterval = null
 let countdownInterval = null
+let progressPollingInterval = null  // Polling pour la progression des réplications en cours
 
 const form = ref({
   name: '',
@@ -1306,6 +1307,38 @@ onMounted(() => {
     }
   }, 30000) // 30 secondes
 
+  // NOUVEAU: Polling automatique pour la progression des réplications en cours
+  const checkReplicationProgress = async () => {
+    for (const replication of replications.value) {
+      if (replication.status === 'syncing') {
+        try {
+          const progressResponse = await vmReplicationsAPI.getProgress(replication.id)
+          const progressData = progressResponse.data
+
+          // Mettre à jour le store avec les données de progression
+          if (progressData.status !== 'not_running') {
+            operationsStore.setOperation('replication', replication.id, {
+              vmName: progressData.vm_name || replication.vm_name,
+              progress: progressData.progress || 0,
+              status: progressData.status,
+              message: progressData.message || '',
+              started_at: progressData.started_at,
+              updated_at: progressData.updated_at
+            })
+          }
+        } catch (error) {
+          console.error(`Erreur polling progression pour réplication ${replication.id}:`, error)
+        }
+      }
+    }
+  }
+
+  // Lancer immédiatement une vérification
+  setTimeout(checkReplicationProgress, 1000)
+
+  // Puis continuer toutes les 3 secondes
+  progressPollingInterval = setInterval(checkReplicationProgress, 3000)
+
   // Force re-render toutes les secondes pour le compte à rebours
   countdownInterval = setInterval(() => {
     // Force Vue to re-render by creating a new reference
@@ -1322,6 +1355,10 @@ onUnmounted(() => {
   if (statesRefreshInterval) {
     clearInterval(statesRefreshInterval)
     statesRefreshInterval = null
+  }
+  if (progressPollingInterval) {
+    clearInterval(progressPollingInterval)
+    progressPollingInterval = null
   }
   if (countdownInterval) {
     clearInterval(countdownInterval)
