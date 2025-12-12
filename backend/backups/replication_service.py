@@ -270,8 +270,11 @@ class ReplicationService:
                                             progress_pct = 59
                                         progress_pct = min(progress_pct, 60)  # Cap à 60% max
 
-                                # Callback UI
-                                if (progress_pct >= last_ui_update + 0.5) or (chunk_counter >= 10):
+                                # Arrondir à l'entier le plus proche pour affichage incrémental clair
+                                progress_pct_int = int(progress_pct)
+
+                                # Callback UI - Afficher à chaque nouveau pourcentage entier (1%, 2%, 3%...)
+                                if progress_pct_int > int(last_ui_update):
                                     if progress_callback:
                                         downloaded_mb = downloaded / (1024 * 1024)
                                         file_mb = file_downloaded / (1024 * 1024)
@@ -279,15 +282,15 @@ class ReplicationService:
                                         speed_str = f" ({speed_mbps:.1f} MB/s)" if speed_mbps > 0 else ""
                                         if total_size > 0:
                                             total_mb = total_size / (1024 * 1024)
-                                            progress_callback(progress_pct, 'exporting',
-                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({int(progress_pct)}%){speed_str}')
+                                            progress_callback(progress_pct_int, 'exporting',
+                                                f'Export VMDK: {downloaded_mb:.1f}/{total_mb:.1f} MB ({progress_pct_int}%){speed_str}')
                                         elif file_size > 0:
-                                            progress_callback(progress_pct, 'exporting',
-                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({int(progress_pct)}%){speed_str}')
+                                            progress_callback(progress_pct_int, 'exporting',
+                                                f'Export {filename}: {file_mb:.1f}/{file_size_mb:.1f} MB ({progress_pct_int}%){speed_str}')
                                         else:
-                                            progress_callback(progress_pct, 'exporting',
+                                            progress_callback(progress_pct_int, 'exporting',
                                                 f'Export {filename}: {file_mb:.1f} MB{speed_str}')
-                                        last_ui_update = progress_pct
+                                        last_ui_update = progress_pct_int
                                         chunk_counter = 0
 
                     # Téléchargement réussi!
@@ -660,23 +663,24 @@ class ReplicationService:
             vm_name = replication.virtual_machine.name
             replica_vm_name = f"{vm_name}_replica"
 
-            # Progression graduelle 0-2%
+            # Progression graduelle 1-24% (affichage incrémental clair)
             if progress_callback:
-                progress_callback(1, 'initializing', 'Initialisation de la réplication...')
-                time.sleep(0.3)
-                progress_callback(2, 'initializing', 'Vérification des serveurs...')
+                for pct in range(1, 3):
+                    progress_callback(pct, 'initializing', f'Initialisation de la réplication... {pct}%')
+                    time.sleep(0.1)
 
             # Vérifier si la VM replica existe déjà (3-8%)
             logger.info(f"[REPLICATION] Connexion au serveur destination: {destination_server.hostname}")
             if progress_callback:
-                progress_callback(3, 'connecting', f'Connexion au serveur destination...')
-                time.sleep(0.2)
-                progress_callback(5, 'connecting', f'Établissement de la connexion à {destination_server.hostname}...')
+                for pct in range(3, 6):
+                    progress_callback(pct, 'connecting', f'Connexion au serveur destination... {pct}%')
+                    time.sleep(0.1)
 
             dest_si = self._connect_to_server(destination_server)
 
             if progress_callback:
-                progress_callback(7, 'checking', 'Vérification de la VM replica existante...')
+                progress_callback(6, 'checking', 'Vérification de la VM replica existante... 6%')
+                progress_callback(7, 'checking', 'Vérification de la VM replica existante... 7%')
 
             existing_replica = self._get_vm_by_name(dest_si, replica_vm_name)
 
@@ -685,59 +689,59 @@ class ReplicationService:
                 logger.info(f"[REPLICATION] Suppression de l'ancienne replica pour mise à jour...")
 
                 if progress_callback:
-                    progress_callback(8, 'cleaning', 'Préparation de la suppression...')
-                    time.sleep(0.2)
-                    progress_callback(10, 'cleaning', 'Suppression de l\'ancienne replica...')
+                    for pct in range(8, 11):
+                        progress_callback(pct, 'cleaning', f'Préparation de la suppression... {pct}%')
+                        time.sleep(0.1)
 
                 # Arrêter la VM si elle tourne
                 if existing_replica.runtime.powerState == vim.VirtualMachinePowerState.poweredOn:
                     if progress_callback:
-                        progress_callback(11, 'cleaning', 'Arrêt de l\'ancienne VM replica...')
+                        progress_callback(11, 'cleaning', 'Arrêt de l\'ancienne VM replica... 11%')
                     power_off_task = existing_replica.PowerOffVM_Task()
                     while power_off_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                         time.sleep(0.1)
 
                 # Supprimer la VM
                 if progress_callback:
-                    progress_callback(13, 'cleaning', 'Suppression des fichiers de la replica...')
+                    for pct in range(12, 15):
+                        progress_callback(pct, 'cleaning', f'Suppression des fichiers de la replica... {pct}%')
+                        time.sleep(0.1)
                 destroy_task = existing_replica.Destroy_Task()
                 while destroy_task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                     time.sleep(0.1)
 
                 logger.info(f"[REPLICATION] Ancienne replica supprimée")
                 if progress_callback:
-                    progress_callback(15, 'cleaned', 'Ancienne replica supprimée')
+                    progress_callback(15, 'cleaned', 'Ancienne replica supprimée - 15%')
             else:
-                # Pas de replica existante, progression rapide
+                # Pas de replica existante, progression rapide mais visible
                 if progress_callback:
-                    progress_callback(10, 'checking', 'Aucune replica existante trouvée')
-                    time.sleep(0.2)
-                    progress_callback(15, 'ready', 'Prêt pour la réplication')
+                    for pct in range(8, 16):
+                        progress_callback(pct, 'checking', f'Aucune replica existante - Préparation... {pct}%')
+                        time.sleep(0.1)
 
             # Créer un répertoire temporaire pour l'export OVF (16-18%)
             if progress_callback:
-                progress_callback(16, 'preparing', 'Création du répertoire temporaire...')
+                for pct in range(16, 19):
+                    progress_callback(pct, 'preparing', f'Création du répertoire temporaire... {pct}%')
+                    time.sleep(0.1)
 
             temp_dir = tempfile.mkdtemp(prefix='replication_')
             logger.info(f"[REPLICATION] Répertoire temporaire: {temp_dir}")
 
-            if progress_callback:
-                progress_callback(18, 'preparing', 'Préparation de l\'export OVF...')
-                time.sleep(0.2)
-
             # Se connecter au serveur source pour l'export (19-24%)
             logger.info(f"[REPLICATION] Connexion au serveur source: {source_server.hostname}")
             if progress_callback:
-                progress_callback(19, 'connecting', f'Connexion au serveur source...')
-                time.sleep(0.2)
-                progress_callback(21, 'connecting', f'Établissement de la connexion à {source_server.hostname}...')
+                for pct in range(19, 23):
+                    progress_callback(pct, 'connecting', f'Connexion au serveur source... {pct}%')
+                    time.sleep(0.1)
 
             source_si = self._connect_to_server(source_server)
 
             if progress_callback:
-                progress_callback(23, 'connected', 'Serveur source connecté')
-                time.sleep(0.2)
-                progress_callback(24, 'preparing', f'Préparation de l\'export de {vm_name}...')
+                for pct in range(23, 25):
+                    progress_callback(pct, 'connected', f'Serveur source connecté - Préparation... {pct}%')
+                    time.sleep(0.1)
 
             # Exporter la VM source en OVF (25% → 60%)
             logger.info(f"[REPLICATION] Export de la VM source: {vm_name}")
@@ -757,15 +761,19 @@ class ReplicationService:
             logger.info(f"[REPLICATION] Export OVF terminé: {ovf_path}")
 
             if progress_callback:
-                progress_callback(60, 'exported', 'Export OVF terminé avec succès')
+                for pct in range(60, 63):
+                    progress_callback(pct, 'exported', f'Export OVF terminé avec succès - {pct}%')
+                    time.sleep(0.1)
 
             # Déconnexion du serveur source
             Disconnect(source_si)
 
-            # Déployer sur le serveur destination avec le nom "_replica" (65%)
+            # Déployer sur le serveur destination avec le nom "_replica" (63-70%)
             logger.info(f"[REPLICATION] Déploiement sur serveur destination: {destination_server.hostname}")
             if progress_callback:
-                progress_callback(65, 'deploying', f'Déploiement de la replica sur {destination_server.hostname}...')
+                for pct in range(63, 66):
+                    progress_callback(pct, 'deploying', f'Préparation du déploiement... {pct}%')
+                    time.sleep(0.1)
 
             vmware_service = VMwareService(
                 host=destination_server.hostname,
@@ -776,13 +784,20 @@ class ReplicationService:
 
             # SE CONNECTER au serveur de destination
             logger.info(f"[REPLICATION] Connexion au serveur de destination {destination_server.hostname}...")
+            if progress_callback:
+                for pct in range(66, 69):
+                    progress_callback(pct, 'deploying', f'Connexion au serveur de destination... {pct}%')
+                    time.sleep(0.1)
+
             if not vmware_service.connect():
                 raise Exception(f"Impossible de se connecter au serveur de destination {destination_server.hostname}")
             logger.info(f"[REPLICATION] [OK] Connecté au serveur de destination")
 
-            # Utiliser le datastore configuré dans la réplication (70%)
+            # Utiliser le datastore configuré dans la réplication (69-73%)
             if progress_callback:
-                progress_callback(70, 'deploying', 'Vérification du datastore de destination...')
+                for pct in range(69, 73):
+                    progress_callback(pct, 'deploying', f'Vérification du datastore de destination... {pct}%')
+                    time.sleep(0.1)
 
             dest_datastore = replication.destination_datastore
             logger.info(f"[REPLICATION] Datastore de destination configuré: {dest_datastore}")
@@ -808,18 +823,18 @@ class ReplicationService:
                 logger.error(f"[REPLICATION] Erreur lors de la vérification du datastore: {ds_err}", exc_info=True)
                 raise Exception(f"Erreur vérification datastore: {ds_err}")
 
-            # Déployer l'OVF (75% → 90%)
+            # Déployer l'OVF (73% → 90%)
             if progress_callback:
-                progress_callback(75, 'deploying', 'Déploiement de l\'OVF en cours...')
+                for pct in range(73, 76):
+                    progress_callback(pct, 'deploying', f'Début du déploiement de l\'OVF... {pct}%')
+                    time.sleep(0.1)
 
-            # Créer un callback wrapper pour mapper 0-100% du déploiement vers 75-90% de la progression totale
-            # Note: deploy_ovf fait déjà un mapping interne 2-94%, donc on ajuste pour éviter le double mapping
+            # Créer un callback wrapper pour mapper 0-100% du déploiement vers 76-90% de la progression totale
             def deploy_progress_callback(deploy_pct, status='deploying', message='Déploiement en cours...'):
                 if progress_callback:
-                    # Mapper intelligemment: 0-100% du déploiement vers 75-90% de la progression totale
-                    # On garde une marge car deploy_ovf va de 2% à 94% en interne
-                    total_pct = 75 + (15 * deploy_pct / 100)
-                    progress_callback(total_pct, status, message)
+                    # Mapper 0-100% du déploiement vers 76-90% de la progression totale
+                    total_pct = int(76 + (14 * deploy_pct / 100))
+                    progress_callback(total_pct, status, f'{message} - {total_pct}%')
 
             logger.info(f"[REPLICATION] Déploiement OVF avec support d'annulation (replication_id={replication_id})")
 
@@ -840,28 +855,23 @@ class ReplicationService:
             logger.info(f"[REPLICATION] VM replica déployée: {replica_vm_name}")
 
             if progress_callback:
-                progress_callback(90, 'deployed', f'VM replica {replica_vm_name} déployée')
-                time.sleep(0.3)
-                progress_callback(92, 'finalizing', 'Vérification de la VM replica...')
-                time.sleep(0.2)
+                for pct in range(90, 93):
+                    progress_callback(pct, 'deployed', f'VM replica {replica_vm_name} déployée - {pct}%')
+                    time.sleep(0.1)
 
             # Nettoyer le répertoire temporaire (93-96%)
             if progress_callback:
-                progress_callback(93, 'cleaning', 'Début du nettoyage...')
-                time.sleep(0.2)
-                progress_callback(94, 'cleaning', 'Suppression des fichiers temporaires...')
+                for pct in range(93, 96):
+                    progress_callback(pct, 'cleaning', f'Suppression des fichiers temporaires... {pct}%')
+                    time.sleep(0.1)
 
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
                 logger.info(f"[REPLICATION] Répertoire temporaire nettoyé")
 
             if progress_callback:
-                progress_callback(96, 'cleaned', 'Nettoyage terminé')
-                time.sleep(0.2)
-
-            # Mettre à jour la réplication (97-99%)
-            if progress_callback:
-                progress_callback(97, 'updating', 'Mise à jour des métadonnées de réplication...')
+                progress_callback(96, 'cleaned', 'Nettoyage terminé - 96%')
+                progress_callback(97, 'updating', 'Mise à jour des métadonnées... 97%')
 
             end_time = timezone.now()
             duration = (end_time - start_time).total_seconds()
@@ -874,16 +884,16 @@ class ReplicationService:
             logger.info(f"[REPLICATION] Terminée: {replication.name} ({duration:.2f}s)")
 
             if progress_callback:
-                progress_callback(98, 'saving', 'Enregistrement de l\'état de réplication...')
-                time.sleep(0.2)
-                progress_callback(99, 'disconnecting', 'Déconnexion des serveurs...')
+                progress_callback(98, 'saving', 'Enregistrement de l\'état de réplication... 98%')
+                time.sleep(0.1)
+                progress_callback(99, 'disconnecting', 'Déconnexion des serveurs... 99%')
 
             # Déconnexion
             Disconnect(dest_si)
 
             if progress_callback:
-                time.sleep(0.3)
-                progress_callback(100, 'completed', f'[OK] Réplication terminée avec succès en {duration:.1f}s')
+                time.sleep(0.2)
+                progress_callback(100, 'completed', f'[OK] Réplication terminée avec succès en {duration:.1f}s - 100%')
 
             # Déconnecter le service VMware de destination
             try:
