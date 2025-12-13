@@ -299,6 +299,27 @@ class ReplicationService:
                     avg_speed = (file_downloaded / 1024 / 1024) / total_time if total_time > 0 else 0
                     logger.info(f"[REPLICATION] [OK] {filename} téléchargé ({file_downloaded / (1024*1024):.1f} MB en {total_time:.1f}s, {avg_speed:.2f} MB/s)")
 
+                except OSError as e:
+                    # Gérer spécifiquement les erreurs d'espace disque (Errno 28)
+                    if e.errno == 28:  # ENOSPC: No space left on device
+                        logger.error(f"[REPLICATION] [ERROR] Espace disque insuffisant lors du téléchargement de {filename}")
+                        # Nettoyer le fichier partiel
+                        if os.path.exists(local_path):
+                            try:
+                                os.remove(local_path)
+                                logger.info(f"[REPLICATION] Fichier partiel supprimé: {local_path}")
+                            except Exception as cleanup_err:
+                                logger.warning(f"[REPLICATION] Erreur nettoyage fichier partiel: {cleanup_err}")
+                        raise Exception(
+                            f"[Errno 28] No space left on device\n\n"
+                            f"Espace disque insuffisant pour télécharger {filename}. "
+                            f"Taille déjà téléchargée: {file_downloaded / (1024*1024):.1f} MB. "
+                            f"Libérez de l'espace disque et réessayez."
+                        )
+                    else:
+                        # Autre erreur OSError
+                        raise
+
                 except (requests.exceptions.ChunkedEncodingError,
                         requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout,
@@ -911,8 +932,31 @@ class ReplicationService:
         except Exception as e:
             logger.error(f"[REPLICATION] Erreur: {replication.name}: {e}")
 
+            # Détecter l'erreur d'espace disque insuffisant
+            error_message = str(e)
+            if '[Errno 28]' in error_message or 'No space left on device' in error_message:
+                # Message d'erreur clair et actionnable pour l'utilisateur
+                user_message = (
+                    "❌ Espace disque insuffisant\n\n"
+                    "Le disque contenant les fichiers temporaires est plein. "
+                    "La réplication nécessite de l'espace disque temporaire pour exporter la VM.\n\n"
+                    "💡 Solutions possibles :\n"
+                    "• Libérer de l'espace disque sur le serveur (supprimer fichiers inutiles, vider /tmp)\n"
+                    "• Nettoyer les anciennes sauvegardes et exports OVF\n"
+                    "• Vérifier l'espace disponible avec : df -h /tmp\n"
+                    "• Configurer un répertoire temporaire sur un disque avec plus d'espace"
+                )
+                detailed_error = (
+                    f"Espace disque insuffisant pour créer les fichiers temporaires de réplication. "
+                    f"Répertoire temporaire : {temp_dir if temp_dir else '/tmp'}. "
+                    f"Libérez de l'espace disque et réessayez."
+                )
+            else:
+                user_message = f"Erreur: {error_message}"
+                detailed_error = error_message
+
             if progress_callback:
-                progress_callback(-1, 'error', f'Erreur: {str(e)}')
+                progress_callback(-1, 'error', user_message)
 
             # Déconnecter le service VMware de destination si créé
             try:
@@ -934,8 +978,8 @@ class ReplicationService:
 
             return {
                 'success': False,
-                'error': str(e),
-                'message': f"Erreur lors de la réplication: {e}"
+                'error': detailed_error,
+                'message': user_message
             }
 
     def execute_failover(self, failover_event, test_mode=False):
